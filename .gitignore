@@ -25,6 +25,7 @@ Thumbs.db
 
 # Turbo
 .turbo/
+.claude/
 
 # Python (reference Flask app)
 reference_src/__pycache__/
@@ -32,3 +33,4 @@ reference_src/*.pyc
 reference_src/.pytest_cache/
 reference_src/venv/
 reference_src/.venv/
+
