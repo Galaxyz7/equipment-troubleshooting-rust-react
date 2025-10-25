@@ -1,0 +1,42 @@
+{
+  "name": "equipment-troubleshooting",
+  "version": "2.0.0",
+  "private": true,
+  "packageManager": "npm@10.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:api": "cargo watch -x 'run --manifest-path apps/api/Cargo.toml'",
+    "build": "turbo run build",
+    "build:web": "npm run build --workspace=apps/web",
+    "build:api": "cargo build --release --manifest-path apps/api/Cargo.toml",
+    "test": "turbo run test",
+    "test:web": "npm run test --workspace=apps/web",
+    "test:api": "cargo test --manifest-path apps/api/Cargo.toml",
+    "lint": "turbo run lint",
+    "lint:web": "npm run lint --workspace=apps/web",
+    "lint:api": "cargo clippy --manifest-path apps/api/Cargo.toml -- -D warnings",
+    "format": "npm run format:web && npm run format:api",
+    "format:web": "prettier --write \"apps/web/src/**/*.{ts,tsx}\"",
+    "format:api": "cargo fmt --manifest-path apps/api/Cargo.toml",
+    "clean": "turbo run clean && rm -rf node_modules target",
+    "migrate": "sqlx migrate run --source apps/api/migrations"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "pg": "^8.16.3"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo run:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(dir:*)",
+      "Bash(curl:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(cargo clean:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(npm install)",
+      "Bash(npm run dev:*)",
+      "Bash(npx tsc:*)",
+      "Bash(TOKEN=\"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyM2Q3NjE1My00Y2QzLTQ5M2YtOThiZC1iYjYyNDU4MzU1ZmIiLCJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIiwicm9sZSI6IkFkbWluIiwiaWF0IjoxNzYxMzU5MzUzLCJleHAiOjE3NjE0NDU3NTN9.OpYWQ7cOU0lh-jB1FdiBvHq9CW79Evo13BaQaUZN0HY\")",
+      "Bash(npm install:*)",
+      "Bash(TOKEN=\"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyM2Q3NjE1My00Y2QzLTQ5M2YtOThiZC1iYjYyNDU4MzU1ZmIiLCJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIiwicm9sZSI6IkFkbWluIiwiaWF0IjoxNzYxMzYwODUyLCJleHAiOjE3NjE0NDcyNTJ9.BQlp27jd2y39SD4ONI2d2UWhlrJoj-pNHy77ceNkPgo\")",
+      "Bash(npm cache clean:*)",
+      "Bash(npm run build:*)",
+      "Bash(sqlx database:*)",
+      "Bash(set SQLX_OFFLINE=true)",
+      "Bash(cross-env SQLX_OFFLINE=true cargo run:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
