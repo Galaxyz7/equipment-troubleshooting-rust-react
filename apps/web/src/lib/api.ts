@@ -27,9 +27,26 @@ import type {
   NodeWithConnections,
 } from '../types';
 
-// Use relative path in production (when served by same server)
-// Use localhost:5000 in development (when using separate dev servers)
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.MODE === 'production' ? '' : 'http://localhost:5000');
+// Auto-detect API URL based on current page
+// In production, frontend is served by the backend, so we use the same origin
+// In development, you can set VITE_API_URL in .env for separate dev servers
+const getApiBaseUrl = () => {
+  // If VITE_API_URL is set (development mode), use it
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+
+  // Otherwise, auto-detect from current window location (production mode)
+  // This allows the API URL to be configured purely from the backend .env
+  const protocol = window.location.protocol; // http: or https:
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+
+  // Construct the API base URL from current page URL
+  return port ? `${protocol}//${hostname}:${port}` : `${protocol}//${hostname}`;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 const api = axios.create({
   baseURL: API_BASE_URL,

@@ -23,9 +23,12 @@ required-features = []
 [dependencies]
 # Web framework
 axum = "0.7"
+axum-server = { version = "0.6", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+tokio-rustls = "0.25"
+rustls-pemfile = "2"
 
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }

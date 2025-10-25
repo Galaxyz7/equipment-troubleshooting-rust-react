@@ -20,6 +20,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tower_http::cors::CorsLayer;
+use std::path::Path;
 
 /// SPA fallback handler - serves index.html for all non-API, non-asset routes
 async fn spa_fallback_handler(uri: Uri) -> Response {
@@ -195,16 +196,54 @@ async fn main() {
         .expect(&format!("Invalid HOST:PORT combination: {}", addr_str));
 
     tracing::info!("🚀 Equipment Troubleshooting System");
-    tracing::info!("📡 Server listening on http://{}", addr);
-    tracing::info!("🌐 Frontend & API available at http://{}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("Failed to bind to address");
+    // Check if HTTPS is requested via environment variables
+    let frontend_url = std::env::var("FRONTEND_URL").unwrap_or_default();
+    let use_https = frontend_url.starts_with("https://");
 
-    axum::serve(listener, app)
+    // Check for SSL certificate files in the project root
+    let cert_path = Path::new("../../server.crt");
+    let key_path = Path::new("../../server.key");
+
+    if use_https {
+        // HTTPS mode requested via .env
+        if !cert_path.exists() || !key_path.exists() {
+            tracing::error!("❌ HTTPS requested (FRONTEND_URL starts with https://) but SSL certificates not found!");
+            tracing::error!("📝 Please add server.crt and server.key to the project root");
+            tracing::error!("📖 See SSL_SETUP.md for instructions");
+            panic!("SSL certificates required but not found");
+        }
+
+        tracing::info!("🔒 HTTPS enabled (detected from FRONTEND_URL in .env)");
+        tracing::info!("📡 Server listening on https://{}", addr);
+        tracing::info!("🌐 Frontend & API available at https://{}", addr);
+
+        let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            cert_path,
+            key_path,
+        )
         .await
-        .expect("Failed to start server");
+        .expect("Failed to load SSL certificates");
+
+        axum_server::bind_rustls(addr, config)
+            .serve(app.into_make_service())
+            .await
+            .expect("Failed to start HTTPS server");
+    } else {
+        // HTTP mode
+        tracing::info!("📡 Starting HTTP server (FRONTEND_URL in .env uses http://)");
+        tracing::info!("💡 To enable HTTPS, change FRONTEND_URL to https:// and add SSL certificates");
+        tracing::info!("📡 Server listening on http://{}", addr);
+        tracing::info!("🌐 Frontend & API available at http://{}", addr);
+
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .expect("Failed to bind to address");
+
+        axum::serve(listener, app)
+            .await
+            .expect("Failed to start server");
+    }
 }
 
 async fn health_check() -> &'static str {
