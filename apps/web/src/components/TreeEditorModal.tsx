@@ -39,6 +39,12 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
   // Local state for connection editing (track changes by connection ID)
   const [editingConnections, setEditingConnections] = useState<Record<string, { label: string; to_node_id: string }>>({});
 
+  // Local state for issue metadata editing
+  const [editingIssueName, setEditingIssueName] = useState<string>(issueName);
+  const [editingDisplayCategory, setEditingDisplayCategory] = useState<string>('');
+  const [hasUnsavedIssueChanges, setHasUnsavedIssueChanges] = useState(false);
+  const [issueData, setIssueData] = useState<any>(null);
+
   // Get currently selected node
   const selectedNode = graphData?.nodes.find(n => n.id === selectedNodeId);
 
@@ -48,7 +54,17 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
   // Load graph data from API
   useEffect(() => {
     loadGraph();
+    loadIssueData();
   }, [category]);
+
+  // Initialize issue editing state when issue data changes
+  useEffect(() => {
+    if (issueData) {
+      setEditingIssueName(issueData.name || issueName);
+      setEditingDisplayCategory(issueData.display_category || '');
+      setHasUnsavedIssueChanges(false);
+    }
+  }, [issueData, issueName]);
 
   // Initialize local editing state when selected node changes
   useEffect(() => {
@@ -83,6 +99,47 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
     } catch (err: any) {
       setError(`Failed to load graph: ${err.message}`);
       console.error('Error loading graph:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadIssueData = async () => {
+    try {
+      const issues = await issuesAPI.list();
+      const issue = issues.find(i => i.category === category);
+      if (issue) {
+        setIssueData(issue);
+      }
+    } catch (err: any) {
+      console.error('Error loading issue data:', err);
+    }
+  };
+
+  const handleSaveIssue = async () => {
+    if (!hasUnsavedIssueChanges) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const updateData: any = {};
+      if (editingIssueName !== (issueData?.name || issueName)) {
+        updateData.name = editingIssueName;
+      }
+      if (editingDisplayCategory !== (issueData?.display_category || '')) {
+        updateData.display_category = editingDisplayCategory || null;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        const updatedIssue = await issuesAPI.update(category, updateData);
+        setIssueData(updatedIssue);
+        setHasUnsavedIssueChanges(false);
+        alert('Issue metadata saved successfully!');
+      }
+    } catch (err: any) {
+      setError(`Failed to save issue metadata: ${err.message}`);
+      console.error('Error saving issue:', err);
     } finally {
       setLoading(false);
     }
@@ -403,37 +460,77 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex flex-col">
       {/* Header */}
-      <div className="bg-white p-4 shadow-lg flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">Edit Graph: {issueName}</h2>
-          <p className="text-sm text-gray-600">
-            {graphData?.nodes.length || 0} nodes, {graphData?.connections.length || 0} connections
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={handleCreateNode}
-            className="px-4 py-2 rounded-md bg-green-500 text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium text-sm"
-          >
-            ➕ New Node
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={loading}
-            className={`px-6 py-2 rounded-md text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium ${
-              hasChanges
-                ? 'bg-gradient-to-br from-[#667eea] to-[#764ba2]'
-                : 'bg-gray-400 cursor-not-allowed'
-            }`}
-          >
-            {loading ? '💾 Saving...' : hasChanges ? '💾 Save Changes *' : '💾 No Changes'}
-          </button>
-          <button
-            onClick={handleClose}
-            className="px-6 py-2 rounded-md bg-gray-200 text-gray-700 border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
-          >
-            ✕ Close
-          </button>
+      <div className="bg-white p-4 shadow-lg">
+        <div className="flex justify-between items-start mb-3">
+          <div className="flex-1">
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Edit Graph</h2>
+            <div className="flex gap-4 items-start">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Issue Name</label>
+                <input
+                  type="text"
+                  value={editingIssueName}
+                  onChange={(e) => {
+                    setEditingIssueName(e.target.value);
+                    setHasUnsavedIssueChanges(true);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  placeholder="e.g., Brush Problems"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Display Category (optional)</label>
+                <input
+                  type="text"
+                  value={editingDisplayCategory}
+                  onChange={(e) => {
+                    setEditingDisplayCategory(e.target.value);
+                    setHasUnsavedIssueChanges(true);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  placeholder="e.g., Electrical, Mechanical, General"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Category ID: <span className="font-mono bg-gray-100 px-2 py-1 rounded">{category}</span> •{' '}
+              {graphData?.nodes.length || 0} nodes, {graphData?.connections.length || 0} connections
+            </p>
+          </div>
+          <div className="flex gap-3 ml-4">
+            {hasUnsavedIssueChanges && (
+              <button
+                onClick={handleSaveIssue}
+                disabled={loading}
+                className="px-4 py-2 rounded-md bg-gradient-to-r from-green-500 to-green-600 text-white font-medium hover:from-green-600 hover:to-green-700 shadow-md text-sm whitespace-nowrap"
+              >
+                💾 Save Metadata
+              </button>
+            )}
+            <button
+              onClick={handleCreateNode}
+              className="px-4 py-2 rounded-md bg-green-500 text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium text-sm"
+            >
+              ➕ New Node
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={loading}
+              className={`px-6 py-2 rounded-md text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium ${
+                hasChanges
+                  ? 'bg-gradient-to-br from-[#667eea] to-[#764ba2]'
+                  : 'bg-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {loading ? '💾 Saving...' : hasChanges ? '💾 Save Layout *' : '💾 No Changes'}
+            </button>
+            <button
+              onClick={handleClose}
+              className="px-6 py-2 rounded-md bg-gray-200 text-gray-700 border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
+            >
+              ✕ Close
+            </button>
+          </div>
         </div>
       </div>
 

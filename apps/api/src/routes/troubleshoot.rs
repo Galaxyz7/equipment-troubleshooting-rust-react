@@ -213,7 +213,7 @@ pub async fn submit_answer(
 
     // Get the from_node (current node)
     let from_node = sqlx::query_as::<_, Node>(
-        "SELECT id, category, node_type, text, semantic_id, position_x, position_y, is_active, created_at, updated_at
+        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
          FROM nodes
          WHERE id = $1"
     )
@@ -223,7 +223,7 @@ pub async fn submit_answer(
 
     // Get the target node
     let next_node = sqlx::query_as::<_, Node>(
-        "SELECT id, category, node_type, text, semantic_id, position_x, position_y, is_active, created_at, updated_at
+        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
          FROM nodes
          WHERE id = $1"
     )
@@ -399,7 +399,7 @@ pub async fn get_session(
 
     // Get current node (target of last connection)
     let current_node = sqlx::query_as::<_, Node>(
-        "SELECT id, category, node_type, text, semantic_id, position_x, position_y, is_active, created_at, updated_at
+        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
          FROM nodes
          WHERE id = $1"
     )
