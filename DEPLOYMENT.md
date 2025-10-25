@@ -99,15 +99,17 @@ PORT=5000
 FRONTEND_URL=https://troubleshoot.company.com:5000
 ```
 
-**Plus add SSL certificates:**
+**Plus add SSL certificates (same directory as binary):**
 ```
 your-server/
 ├── equipment-troubleshooting
 ├── ui/
 ├── .env
-├── server.crt    ← Add these for HTTPS
-└── server.key    ←
+├── my-cert.crt         ← Any .crt file
+└── my-cert.key         ← Any .key file
 ```
+
+**Note:** The server automatically finds the first `.crt` and `.key` files in the directory - **no need to rename them!**
 
 See [SSL_SETUP.md](SSL_SETUP.md) for certificate generation.
 

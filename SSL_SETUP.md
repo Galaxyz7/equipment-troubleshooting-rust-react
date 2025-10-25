@@ -10,11 +10,13 @@ The application automatically enables HTTPS based on your `.env` configuration.
    FRONTEND_URL=https://x-desktop.crocodile-arctic.ts.net:5000
    ```
 
-2. **Add SSL certificate files to project root:**
-   - `server.crt` - SSL certificate file
-   - `server.key` - Private key file
+2. **Add SSL certificate files:**
+   - Any `.crt` file - SSL certificate
+   - Any `.key` file - Private key
 
-That's it! The server automatically detects the `https://` in `FRONTEND_URL` and enables HTTPS mode.
+That's it! The server automatically:
+- Detects `https://` in `FRONTEND_URL` and enables HTTPS mode
+- Finds the first `.crt` and `.key` files (no need to rename them!)
 
 ## 📋 How It Works
 
@@ -122,13 +124,15 @@ tailscale cert x-desktop.crocodile-arctic.ts.net
 # - /var/lib/tailscale/certs/x-desktop.crocodile-arctic.ts.net.crt
 # - /var/lib/tailscale/certs/x-desktop.crocodile-arctic.ts.net.key
 
-# Copy to project root
-sudo cp /var/lib/tailscale/certs/x-desktop.crocodile-arctic.ts.net.crt ./server.crt
-sudo cp /var/lib/tailscale/certs/x-desktop.crocodile-arctic.ts.net.key ./server.key
-sudo chown $USER:$USER server.crt server.key
-chmod 644 server.crt
-chmod 600 server.key
+# Copy to deployment directory (no need to rename - server finds any .crt/.key!)
+sudo cp /var/lib/tailscale/certs/x-desktop.crocodile-arctic.ts.net.crt ~/eq-ts_app/
+sudo cp /var/lib/tailscale/certs/x-desktop.crocodile-arctic.ts.net.key ~/eq-ts_app/
+sudo chown $USER:$USER ~/eq-ts_app/*.crt ~/eq-ts_app/*.key
+chmod 644 ~/eq-ts_app/*.crt
+chmod 600 ~/eq-ts_app/*.key
 ```
+
+**Note:** The server automatically finds any `.crt` and `.key` files - you don't need to rename them to `server.crt` / `server.key`!
 
 **Benefits:**
 - ✅ Automatically trusted by all devices on your Tailnet
@@ -160,16 +164,30 @@ You'll see:
 
 ### Certificates not detected
 
-Make sure files are in the **project root**, not the api directory:
+**For Development:** Place in project root:
 ```
 equipment-troubleshooting-rust-react/
-├── server.crt          ← Here
-├── server.key          ← Here
+├── server.crt          ← Development: Place here
+├── server.key          ← Development: Place here
 ├── apps/
 │   ├── api/
 │   └── web/
 └── .env
 ```
+
+**For Deployment:** Place in same directory as binary:
+```
+your-deployment-dir/
+├── equipment-troubleshooting    ← Binary
+├── hostname.crt                 ← Production: Any .crt file
+├── hostname.key                 ← Production: Any .key file
+├── ui/
+└── .env
+```
+
+The server automatically:
+- Checks deployment directory first, then project root
+- Finds the first `.crt` and `.key` files (any filename works!)
 
 ### Permission denied errors
 

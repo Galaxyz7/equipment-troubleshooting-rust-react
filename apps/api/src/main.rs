@@ -20,7 +20,8 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tower_http::cors::CorsLayer;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::fs;
 
 /// SPA fallback handler - serves index.html for all non-API, non-asset routes
 async fn spa_fallback_handler(uri: Uri) -> Response {
@@ -201,20 +202,59 @@ async fn main() {
     let frontend_url = std::env::var("FRONTEND_URL").unwrap_or_default();
     let use_https = frontend_url.starts_with("https://");
 
-    // Check for SSL certificate files in the project root
-    let cert_path = Path::new("../../server.crt");
-    let key_path = Path::new("../../server.key");
+    // Function to find first .crt and .key files in a directory
+    let find_ssl_certs = |dir: &str| -> Option<(PathBuf, PathBuf)> {
+        let dir_path = Path::new(dir);
+        if !dir_path.exists() {
+            return None;
+        }
+
+        let entries = fs::read_dir(dir_path).ok()?;
+        let mut cert_file: Option<PathBuf> = None;
+        let mut key_file: Option<PathBuf> = None;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "crt" && cert_file.is_none() {
+                    cert_file = Some(path);
+                } else if ext == "key" && key_file.is_none() {
+                    key_file = Some(path);
+                }
+            }
+
+            // Stop if we found both
+            if cert_file.is_some() && key_file.is_some() {
+                break;
+            }
+        }
+
+        match (cert_file, key_file) {
+            (Some(cert), Some(key)) => Some((cert, key)),
+            _ => None,
+        }
+    };
+
+    // Try to find SSL certificates in deployment dir first, then project root
+    let ssl_certs = find_ssl_certs(".")
+        .or_else(|| find_ssl_certs("../.."));
+
+    let (cert_path, key_path) = ssl_certs
+        .map(|(cert, key)| (cert, key))
+        .unwrap_or_else(|| (PathBuf::from("./server.crt"), PathBuf::from("./server.key")));
 
     if use_https {
         // HTTPS mode requested via .env
         if !cert_path.exists() || !key_path.exists() {
             tracing::error!("❌ HTTPS requested (FRONTEND_URL starts with https://) but SSL certificates not found!");
-            tracing::error!("📝 Please add server.crt and server.key to the project root");
+            tracing::error!("📝 Please add any .crt and .key file to the same directory as the binary");
             tracing::error!("📖 See SSL_SETUP.md for instructions");
             panic!("SSL certificates required but not found");
         }
 
         tracing::info!("🔒 HTTPS enabled (detected from FRONTEND_URL in .env)");
+        tracing::info!("📜 Using certificate: {}", cert_path.display());
+        tracing::info!("🔑 Using key: {}", key_path.display());
         tracing::info!("📡 Server listening on https://{}", addr);
         tracing::info!("🌐 Frontend & API available at https://{}", addr);
 
