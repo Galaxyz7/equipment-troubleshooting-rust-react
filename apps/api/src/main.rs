@@ -179,13 +179,20 @@ async fn main() {
         // Serve static files for SPA (fallback to index.html for client-side routing)
         .fallback(spa_fallback_handler);
 
+    // Get host from env or use default
+    let host = std::env::var("HOST")
+        .unwrap_or_else(|_| "0.0.0.0".to_string());
+
     // Get port from env or use default
     let port = std::env::var("PORT")
         .unwrap_or_else(|_| "5000".to_string())
         .parse::<u16>()
         .expect("PORT must be a valid number");
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    // Parse the host and port into a SocketAddr
+    let addr_str = format!("{}:{}", host, port);
+    let addr = addr_str.parse::<SocketAddr>()
+        .expect(&format!("Invalid HOST:PORT combination: {}", addr_str));
 
     tracing::info!("🚀 Equipment Troubleshooting System");
     tracing::info!("📡 Server listening on http://{}", addr);

@@ -6,6 +6,10 @@ import type { Node, NavigationOption } from '../types';
 interface HistoryStep {
   nodeText: string;
   optionLabel: string;
+  nodeId: string;
+  connectionId: string;
+  node: Node;
+  options: NavigationOption[];
 }
 
 export default function TroubleshootPage() {
@@ -73,12 +77,16 @@ export default function TroubleshootPage() {
         connection_id: selectedOption,
       });
 
-      // Add current node/option to history
+      // Add current node/option to history (with full state for back navigation)
       const selectedOptionObj = options.find((opt) => opt.connection_id === selectedOption);
       if (currentNode && selectedOptionObj) {
         setHistory([...history, {
           nodeText: currentNode.text,
-          optionLabel: selectedOptionObj.label
+          optionLabel: selectedOptionObj.label,
+          nodeId: currentNode.id,
+          connectionId: selectedOption,
+          node: currentNode,
+          options: options,
         }]);
       }
 
@@ -92,6 +100,21 @@ export default function TroubleshootPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const goBack = () => {
+    if (history.length === 0) return;
+
+    // Get the previous step from history
+    const previousStep = history[history.length - 1];
+
+    // Restore the previous node and options
+    setCurrentNode(previousStep.node);
+    setOptions(previousStep.options);
+    setSelectedOption(previousStep.connectionId);
+
+    // Remove the last step from history
+    setHistory(history.slice(0, -1));
   };
 
   if (loading && !currentNode) {
@@ -224,16 +247,24 @@ export default function TroubleshootPage() {
                     </p>
                   </div>
 
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 flex-wrap">
+                    {history.length > 0 && (
+                      <button
+                        onClick={goBack}
+                        className="flex-1 min-w-[150px] bg-gray-300 hover:bg-gray-400 text-gray-700 text-lg font-semibold py-4 px-8 rounded-lg transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+                      >
+                        ← Try Different Path
+                      </button>
+                    )}
                     <button
                       onClick={startNewSession}
-                      className="flex-1 bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:from-[#5568d3] hover:to-[#6a3f91] text-white text-lg font-semibold py-4 px-8 rounded-lg transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+                      className="flex-1 min-w-[150px] bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:from-[#5568d3] hover:to-[#6a3f91] text-white text-lg font-semibold py-4 px-8 rounded-lg transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
                     >
                       Start New Session
                     </button>
                     <button
                       onClick={() => navigate('/')}
-                      className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 text-lg font-semibold py-4 px-8 rounded-lg transition-all duration-200"
+                      className="flex-1 min-w-[150px] bg-gray-200 hover:bg-gray-300 text-gray-700 text-lg font-semibold py-4 px-8 rounded-lg transition-all duration-200"
                     >
                       Return Home
                     </button>
@@ -277,13 +308,37 @@ export default function TroubleshootPage() {
                     ))}
                   </div>
 
-                  <button
-                    onClick={submitAnswer}
-                    disabled={!selectedOption || loading}
-                    className="w-full bg-[#667eea] hover:bg-[#5568d3] text-white text-lg font-semibold py-4 px-8 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:-translate-y-0.5 hover:shadow-lg"
-                  >
-                    {loading ? 'Loading...' : 'Next'}
-                  </button>
+                  <div className="flex gap-2">
+                    {history.length > 0 && (
+                      <button
+                        onClick={goBack}
+                        disabled={loading}
+                        className="flex-[0.2] bg-gray-200 hover:bg-gray-300 text-gray-700 text-lg font-semibold py-4 px-4 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:-translate-y-0.5 hover:shadow-lg flex items-center justify-center"
+                        title="Go back to previous question"
+                      >
+                        <svg
+                          className="w-6 h-6"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                          />
+                        </svg>
+                      </button>
+                    )}
+                    <button
+                      onClick={submitAnswer}
+                      disabled={!selectedOption || loading}
+                      className={`${history.length > 0 ? 'flex-[0.8]' : 'w-full'} bg-[#667eea] hover:bg-[#5568d3] text-white text-lg font-semibold py-4 px-8 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:-translate-y-0.5 hover:shadow-lg`}
+                    >
+                      {loading ? 'Loading...' : 'Next'}
+                    </button>
+                  </div>
                 </>
               )}
             </div>
