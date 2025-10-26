@@ -168,11 +168,26 @@ pub async fn list_sessions(
         format!("WHERE {}", conditions.join(" AND "))
     };
 
-    // Get total count with same filters
+    // Get total count with same filters (with error handling)
     let count_query = format!("SELECT COUNT(*) FROM sessions {}", where_clause);
-    let total_count = sqlx::query_scalar::<_, i64>(&count_query)
+    let total_count = match sqlx::query_scalar::<_, i64>(&count_query)
         .fetch_one(&state.db)
-        .await?;
+        .await {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!("❌ Error fetching session count: {:?}", e);
+                if e.to_string().contains("relation") && e.to_string().contains("does not exist") {
+                    tracing::warn!("⚠️  Sessions table does not exist. Returning empty list.");
+                }
+                // Return empty list instead of error
+                return Ok(Json(SessionsListResponse {
+                    sessions: vec![],
+                    total_count: 0,
+                    page,
+                    page_size,
+                }));
+            }
+        };
 
     // Fetch sessions with pagination and filters
     let query = format!(
@@ -194,7 +209,7 @@ pub async fn list_sessions(
         where_clause, page_size, offset
     );
 
-    let sessions = sqlx::query_as::<_, (
+    let sessions = match sqlx::query_as::<_, (
         String,
         chrono::DateTime<chrono::Utc>,
         Option<chrono::DateTime<chrono::Utc>>,
@@ -205,7 +220,19 @@ pub async fn list_sessions(
         i32,
     )>(&query)
     .fetch_all(&state.db)
-    .await?;
+    .await {
+        Ok(sessions) => sessions,
+        Err(e) => {
+            tracing::error!("❌ Error fetching sessions: {:?}", e);
+            // Return empty list instead of error
+            return Ok(Json(SessionsListResponse {
+                sessions: vec![],
+                total_count: 0,
+                page,
+                page_size,
+            }));
+        }
+    };
 
     let session_summaries: Vec<SessionSummary> = sessions
         .into_iter()
@@ -264,11 +291,11 @@ pub async fn get_stats(
         ),
         basic_stats AS (
             SELECT
-                COUNT(*) as total,
-                COUNT(*) FILTER (WHERE completed_at IS NOT NULL) as completed,
-                COUNT(*) FILTER (WHERE abandoned = true) as abandoned,
-                COUNT(*) FILTER (WHERE completed_at IS NULL AND abandoned = false) as active,
-                AVG(jsonb_array_length(steps)) FILTER (WHERE completed_at IS NOT NULL) as avg_steps
+                COALESCE(COUNT(*), 0) as total,
+                COALESCE(COUNT(*) FILTER (WHERE completed_at IS NOT NULL), 0) as completed,
+                COALESCE(COUNT(*) FILTER (WHERE abandoned = true), 0) as abandoned,
+                COALESCE(COUNT(*) FILTER (WHERE completed_at IS NULL AND abandoned = false), 0) as active,
+                COALESCE(AVG(jsonb_array_length(steps)) FILTER (WHERE completed_at IS NOT NULL), 0.0) as avg_steps
             FROM filtered_sessions
         ),
         conclusion_stats AS (
@@ -284,14 +311,15 @@ pub async fn get_stats(
                 COALESCE((steps->0->>'category')::text, 'unknown') as category,
                 COUNT(*) as count
             FROM filtered_sessions
+            WHERE steps IS NOT NULL AND jsonb_array_length(steps) > 0
             GROUP BY category
             ORDER BY count DESC
         )
         SELECT
-            (SELECT total FROM basic_stats) as total_sessions,
-            (SELECT completed FROM basic_stats) as completed_sessions,
-            (SELECT abandoned FROM basic_stats) as abandoned_sessions,
-            (SELECT active FROM basic_stats) as active_sessions,
+            COALESCE((SELECT total FROM basic_stats), 0) as total_sessions,
+            COALESCE((SELECT completed FROM basic_stats), 0) as completed_sessions,
+            COALESCE((SELECT abandoned FROM basic_stats), 0) as abandoned_sessions,
+            COALESCE((SELECT active FROM basic_stats), 0) as active_sessions,
             COALESCE((SELECT avg_steps FROM basic_stats), 0.0) as avg_steps_to_completion,
             COALESCE(
                 (SELECT json_agg(json_build_object('conclusion', final_conclusion, 'count', count))
@@ -307,21 +335,45 @@ pub async fn get_stats(
         date_filter
     );
 
-    let row = sqlx::query(&query)
-        .fetch_one(&state.db)
-        .await?;
+    // Execute query with error handling and logging
+    let row = match sqlx::query(&query).fetch_one(&state.db).await {
+        Ok(row) => row,
+        Err(e) => {
+            // Log the detailed error with proper tracing
+            tracing::error!("❌ Error executing stats query: {:?}", e);
+            tracing::debug!("SQL Query that failed: {}", query);
 
-    let total_sessions: i64 = row.try_get("total_sessions")?;
-    let completed_sessions: i64 = row.try_get("completed_sessions")?;
-    let abandoned_sessions: i64 = row.try_get("abandoned_sessions")?;
-    let active_sessions: i64 = row.try_get("active_sessions")?;
-    let avg_steps_to_completion: f64 = row.try_get("avg_steps_to_completion")?;
+            // Check if it's a table missing error
+            if e.to_string().contains("relation") && e.to_string().contains("does not exist") {
+                tracing::warn!("⚠️  Sessions table does not exist. Database migrations may not have been run.");
+                tracing::info!("💡 To create the sessions table, ensure DATABASE_URL is set and run database migrations.");
+            }
 
-    let conclusions_json: serde_json::Value = row.try_get("conclusions")?;
+            // Return empty stats gracefully instead of 500 error
+            tracing::info!("📊 Returning empty stats due to query error (sessions table may be empty or missing)");
+            return Ok(Json(DashboardStats {
+                total_sessions: 0,
+                completed_sessions: 0,
+                abandoned_sessions: 0,
+                active_sessions: 0,
+                avg_steps_to_completion: 0.0,
+                most_common_conclusions: vec![],
+                sessions_by_category: vec![],
+            }));
+        }
+    };
+
+    let total_sessions: i64 = row.try_get("total_sessions").unwrap_or(0);
+    let completed_sessions: i64 = row.try_get("completed_sessions").unwrap_or(0);
+    let abandoned_sessions: i64 = row.try_get("abandoned_sessions").unwrap_or(0);
+    let active_sessions: i64 = row.try_get("active_sessions").unwrap_or(0);
+    let avg_steps_to_completion: f64 = row.try_get("avg_steps_to_completion").unwrap_or(0.0);
+
+    let conclusions_json: serde_json::Value = row.try_get("conclusions").unwrap_or(serde_json::json!([]));
     let most_common_conclusions: Vec<ConclusionStats> = serde_json::from_value(conclusions_json)
         .unwrap_or_default();
 
-    let categories_json: serde_json::Value = row.try_get("categories")?;
+    let categories_json: serde_json::Value = row.try_get("categories").unwrap_or(serde_json::json!([]));
     let sessions_by_category: Vec<CategoryStats> = serde_json::from_value(categories_json)
         .unwrap_or_default();
 

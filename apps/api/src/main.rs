@@ -180,8 +180,18 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/api/health", get(health_check_db))
-        // OpenAPI/Swagger documentation
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        // OpenAPI/Swagger documentation with enhanced configuration
+        .merge(
+            SwaggerUi::new("/swagger-ui")
+                .url("/api-docs/openapi.json", ApiDoc::openapi())
+                .config(utoipa_swagger_ui::Config::default()
+                    .try_it_out_enabled(true)  // Enable "Try it out" by default
+                    .filter(true)               // Enable search/filter
+                    .persist_authorization(true) // Remember auth token
+                    .display_request_duration(true) // Show request timing
+                    .doc_expansion("list")      // Expand tags, not operations
+                )
+        )
         // Authentication routes (public)
         .route("/api/auth/login", post(routes::auth::login))
         .route("/api/auth/refresh", post(routes::auth::refresh))

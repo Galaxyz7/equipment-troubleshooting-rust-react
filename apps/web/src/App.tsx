@@ -11,7 +11,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('token');
 
   if (!token) {
-    return <Navigate to="/admin/login" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
@@ -28,7 +28,9 @@ function App() {
         <Route path="/conclusion" element={<ConclusionPage />} />
 
         {/* Admin Routes */}
-        <Route path="/admin/login" element={<AdminLoginPage />} />
+        <Route path="/login" element={<AdminLoginPage />} />
+        {/* Redirect old /admin/login to new /login */}
+        <Route path="/admin/login" element={<Navigate to="/login" replace />} />
         <Route
           path="/admin"
           element={

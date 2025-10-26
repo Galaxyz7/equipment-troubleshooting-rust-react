@@ -23,21 +23,27 @@ pub struct Claims {
 }
 
 impl Claims {
-    /// Create new claims for a user
-    pub fn new(user_id: Uuid, email: String, role: UserRole) -> Self {
+    /// Create new claims for a user with custom expiration
+    pub fn new_with_expiration(user_id: Uuid, email: String, role: UserRole, expiration_minutes: i64) -> Self {
         let now = Utc::now();
-        let expiration_hours = std::env::var("JWT_EXPIRATION_HOURS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(24);
 
         Self {
             sub: user_id.to_string(),
             email,
             role,
             iat: now.timestamp(),
-            exp: (now + Duration::hours(expiration_hours)).timestamp(),
+            exp: (now + Duration::minutes(expiration_minutes)).timestamp(),
         }
+    }
+
+    /// Create new claims for a user with default expiration from env (fallback: 24 hours)
+    pub fn new(user_id: Uuid, email: String, role: UserRole) -> Self {
+        let expiration_hours = std::env::var("JWT_EXPIRATION_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(24);
+
+        Self::new_with_expiration(user_id, email, role, expiration_hours * 60)
     }
 
     /// Check if token has expired
@@ -46,16 +52,31 @@ impl Claims {
     }
 }
 
-/// Generate JWT token for user
+/// Generate JWT token for user with default expiration
 pub fn generate_token(user_id: Uuid, email: String, role: UserRole) -> ApiResult<String> {
     let claims = Claims::new(user_id, email, role);
+    encode_claims(&claims)
+}
 
+/// Generate JWT token for user with custom expiration in minutes
+pub fn generate_token_with_expiration(
+    user_id: Uuid,
+    email: String,
+    role: UserRole,
+    expiration_minutes: i64,
+) -> ApiResult<String> {
+    let claims = Claims::new_with_expiration(user_id, email, role, expiration_minutes);
+    encode_claims(&claims)
+}
+
+/// Internal function to encode claims into a JWT token
+fn encode_claims(claims: &Claims) -> ApiResult<String> {
     let secret = std::env::var("JWT_SECRET")
         .map_err(|_| ApiError::internal("JWT_SECRET not configured"))?;
 
     let token = encode(
         &Header::default(),
-        &claims,
+        claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
     .map_err(|e| {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../lib/api';
 
@@ -6,8 +6,26 @@ export default function AdminLoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Redirect to /admin if already logged in (performance optimization)
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      // Verify token is still valid
+      authAPI.getMe()
+        .then(() => {
+          navigate('/admin', { replace: true });
+        })
+        .catch(() => {
+          // Token is invalid, remove it
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+        });
+    }
+  }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -15,7 +33,11 @@ export default function AdminLoginPage() {
     setLoading(true);
 
     try {
-      const response = await authAPI.login({ email, password });
+      const response = await authAPI.login({
+        email,
+        password,
+        remember_me: rememberMe
+      });
       localStorage.setItem('token', response.token);
       localStorage.setItem('user', JSON.stringify(response.user));
       navigate('/admin');
@@ -72,6 +94,25 @@ export default function AdminLoginPage() {
               placeholder="Enter your password"
             />
           </div>
+
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="rememberMe"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="h-4 w-4 text-[#667eea] focus:ring-[#667eea] border-gray-300 rounded cursor-pointer"
+            />
+            <label htmlFor="rememberMe" className="ml-2 block text-sm text-gray-700 cursor-pointer">
+              Stay signed in (30 days)
+            </label>
+          </div>
+
+          {!rememberMe && (
+            <div className="text-xs text-gray-500 -mt-3 ml-6">
+              ⚠️ Without this option, your session will expire in 15 minutes for security.
+            </div>
+          )}
 
           <button
             type="submit"

@@ -104,7 +104,7 @@ export default function IssuesListPage() {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    navigate('/admin/login');
+    navigate('/login');
   };
 
   if (loading) {

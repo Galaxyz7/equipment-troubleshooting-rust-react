@@ -1,7 +1,7 @@
 use crate::error::{ApiError, ApiResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::{User, UserRole};
-use crate::utils::jwt::{generate_token, verify_token};
+use crate::utils::jwt::{generate_token, generate_token_with_expiration, verify_token};
 use crate::AppState;
 use argon2::PasswordVerifier;
 use axum::{extract::State, Extension, Json};
@@ -14,6 +14,9 @@ use ts_rs::TS;
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
+    /// If true, token will not expire. If false, token expires in 15 minutes.
+    #[serde(default)]
+    pub remember_me: bool,
 }
 
 /// Login response with JWT token and user info
@@ -78,8 +81,16 @@ pub async fn login(
         .verify_password(req.password.as_bytes(), &password_hash)
         .map_err(|_| ApiError::unauthorized("Invalid email or password"))?;
 
-    // Generate JWT token
-    let token = generate_token(user.id, user.email.clone(), user.role.clone())?;
+    // Generate JWT token with appropriate expiration
+    // If remember_me is true: token valid for 30 days (43200 minutes)
+    // If remember_me is false: token valid for 15 minutes
+    let token = if req.remember_me {
+        tracing::info!("🔐 Login with 'stay signed in' enabled for user: {}", user.email);
+        generate_token_with_expiration(user.id, user.email.clone(), user.role.clone(), 43200)?
+    } else {
+        tracing::info!("🔐 Login with short-lived session (15 min) for user: {}", user.email);
+        generate_token_with_expiration(user.id, user.email.clone(), user.role.clone(), 15)?
+    };
 
     // Return response
     Ok(Json(LoginResponse {

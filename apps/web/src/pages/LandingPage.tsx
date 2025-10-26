@@ -20,7 +20,7 @@ export default function LandingPage() {
         </button>
         <div className="mt-6">
           <a
-            href="/admin/login"
+            href="/login"
             className="text-sm text-[#667eea] hover:underline"
           >
             Admin Login

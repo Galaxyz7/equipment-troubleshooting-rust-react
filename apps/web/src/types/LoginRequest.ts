@@ -3,4 +3,4 @@
 /**
  * Login request payload
  */
-export type LoginRequest = { email: string, password: string, };
+export type LoginRequest = { email: string, password: string, remember_me?: boolean, };
