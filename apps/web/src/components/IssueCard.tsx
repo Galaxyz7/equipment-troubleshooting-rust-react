@@ -45,9 +45,6 @@ export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete, o
                 {issue.display_category}
               </span>
             )}
-            <span className="inline-block bg-[#f0f0f0] text-gray-600 px-3 py-1 rounded text-[0.85em]">
-              {issue.category}
-            </span>
           </div>
           <p className="text-gray-500 text-[0.9em] mt-2">
             {Number(issue.question_count)} question{Number(issue.question_count) !== 1 ? 's' : ''} in this decision tree

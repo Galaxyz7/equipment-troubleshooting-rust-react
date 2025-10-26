@@ -17,10 +17,10 @@ interface TreeEditorModalProps {
   category: string;
   issueName: string;
   onClose: () => void;
-  onSave: () => void;
+  onSave?: () => void; // Optional - kept for backward compatibility but not used
 }
 
-export default function TreeEditorModal({ category, issueName, onClose, onSave }: TreeEditorModalProps) {
+export default function TreeEditorModal({ category, issueName, onClose }: TreeEditorModalProps) {
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
   const [flowEdges, setFlowEdges, onFlowEdgesChange] = useEdgesState([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -33,7 +33,6 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
 
   // Local state for editing (to avoid auto-save on every keystroke)
   const [editingText, setEditingText] = useState<string>('');
-  const [editingSemanticId, setEditingSemanticId] = useState<string>('');
   const [hasUnsavedNodeChanges, setHasUnsavedNodeChanges] = useState(false);
 
   // Local state for connection editing (track changes by connection ID)
@@ -64,7 +63,6 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
   useEffect(() => {
     if (selectedNode) {
       setEditingText(selectedNode.text);
-      setEditingSemanticId(selectedNode.semantic_id || '');
       setHasUnsavedNodeChanges(false);
     }
   }, [selectedNode]);
@@ -128,22 +126,40 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
 
     // Create React Flow edges from connections
     graph.connections.forEach(connection => {
+      const isSelected = selectedConnectionId === connection.id;
+
       reactFlowEdges.push({
         id: connection.id,
         source: connection.from_node_id,
         target: connection.to_node_id,
         label: connection.label,
-        type: 'smoothstep',
-        animated: true,
+        type: 'default', // Bezier curves for smooth routing
+        animated: false, // Solid lines instead of dashed
+        style: {
+          stroke: isSelected ? '#8b5cf6' : '#64748b', // Purple when selected, slate gray default
+          strokeWidth: isSelected ? 3 : 2, // Thicker when selected
+        },
+        labelStyle: {
+          fill: isSelected ? '#8b5cf6' : '#1f2937',
+          fontWeight: isSelected ? 600 : 500,
+          fontSize: 12,
+        },
+        labelBgStyle: {
+          fill: '#ffffff',
+          fillOpacity: 0.85,
+        },
         markerEnd: {
           type: MarkerType.ArrowClosed,
+          width: 20,
+          height: 20,
+          color: isSelected ? '#8b5cf6' : '#64748b',
         },
       });
     });
 
     setFlowNodes(reactFlowNodes);
     setFlowEdges(reactFlowEdges);
-  }, [category, setFlowNodes, setFlowEdges]);
+  }, [category, selectedConnectionId, setFlowNodes, setFlowEdges]);
 
   const loadGraph = useCallback(async () => {
     setLoading(true);
@@ -159,6 +175,13 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
       setLoading(false);
     }
   }, [category, convertGraphToFlow]);
+
+  // Re-render edges when selection changes
+  useEffect(() => {
+    if (graphData) {
+      convertGraphToFlow(graphData);
+    }
+  }, [selectedConnectionId, graphData, convertGraphToFlow]);
 
   const loadIssueData = useCallback(async () => {
     try {
@@ -242,6 +265,26 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
       if (!label || label.trim() === '') return;
 
       try {
+        // Save current node positions before creating connection
+        const nodePositions: Record<string, { x: number; y: number }> = {};
+        flowNodes.forEach(node => {
+          nodePositions[node.id] = {
+            x: node.position.x,
+            y: node.position.y,
+          };
+        });
+
+        // Update positions in database first
+        for (const node of graphData.nodes) {
+          const pos = nodePositions[node.id];
+          if (pos && (node.position_x !== pos.x || node.position_y !== pos.y)) {
+            await nodesAPI.update(node.id, {
+              position_x: pos.x,
+              position_y: pos.y,
+            });
+          }
+        }
+
         // Count existing connections from source node for order_index
         const existingConnections = graphData.connections.filter(c => c.from_node_id === params.source);
 
@@ -252,6 +295,10 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
           order_index: existingConnections.length,
         });
 
+        // Save positions to localStorage as backup
+        const layoutKey = `graph_layout_${category}`;
+        localStorage.setItem(layoutKey, JSON.stringify(nodePositions));
+
         await loadGraph();
         setHasChanges(false);
       } catch (err: any) {
@@ -259,7 +306,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
         console.error('Error creating connection:', err);
       }
     },
-    [graphData, loadGraph]
+    [graphData, loadGraph, flowNodes, category]
   );
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: FlowNode) => {
@@ -290,9 +337,6 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
 
       if (editingText !== selectedNode.text) {
         nodeUpdates.text = editingText;
-      }
-      if (editingSemanticId !== (selectedNode.semantic_id || '')) {
-        nodeUpdates.semantic_id = editingSemanticId || undefined;
       }
 
       if (Object.keys(nodeUpdates).length > 0) {
@@ -390,6 +434,32 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
       .substring(0, 50);
 
     try {
+      // Save current node positions before creating new node
+      if (graphData) {
+        const nodePositions: Record<string, { x: number; y: number }> = {};
+        flowNodes.forEach(node => {
+          nodePositions[node.id] = {
+            x: node.position.x,
+            y: node.position.y,
+          };
+        });
+
+        // Update positions in database first
+        for (const node of graphData.nodes) {
+          const pos = nodePositions[node.id];
+          if (pos && (node.position_x !== pos.x || node.position_y !== pos.y)) {
+            await nodesAPI.update(node.id, {
+              position_x: pos.x,
+              position_y: pos.y,
+            });
+          }
+        }
+
+        // Save positions to localStorage as backup
+        const layoutKey = `graph_layout_${category}`;
+        localStorage.setItem(layoutKey, JSON.stringify(nodePositions));
+      }
+
       await nodesAPI.create({
         category,
         node_type: nodeType,
@@ -400,7 +470,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
         position_y: null,
       });
       await loadGraph();
-      setHasChanges(true); // Mark as changed so save button appears
+      setHasChanges(false); // Positions already saved
     } catch (err: any) {
       setError(`Failed to create node: ${err.message}`);
       console.error('Error creating node:', err);
@@ -419,7 +489,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
 
   const handleSave = async () => {
     if (!graphData || !hasChanges) {
-      onSave();
+      // Don't close editor if no changes
       return;
     }
 
@@ -453,7 +523,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
 
       setHasChanges(false);
       alert('Graph saved successfully!');
-      onSave();
+      // Don't call onSave() - keep the editor open for continued editing
     } catch (err: any) {
       setError(`Failed to save: ${err.message}`);
       console.error('Error saving graph:', err);
@@ -614,23 +684,6 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
                   </div>
                 </div>
 
-                {/* Semantic ID */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Semantic ID
-                  </label>
-                  <input
-                    type="text"
-                    value={editingSemanticId}
-                    onChange={(e) => {
-                      setEditingSemanticId(e.target.value);
-                      setHasUnsavedNodeChanges(true);
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    placeholder="e.g., brush_worn"
-                  />
-                </div>
-
                 {/* Node Text */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -685,7 +738,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
           }`}
         >
           <div className="p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Edit Connection</h3>
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Edit Question</h3>
 
             {selectedConnection ? (
               <div>
@@ -693,20 +746,18 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
                 <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
                   <p className="text-xs text-blue-600 font-medium mb-1">From:</p>
                   <p className="text-sm text-gray-800 mb-2">
-                    {graphData?.nodes.find(n => n.id === selectedConnection.from_node_id)?.semantic_id ||
-                     graphData?.nodes.find(n => n.id === selectedConnection.from_node_id)?.text.substring(0, 30)}
+                    {graphData?.nodes.find(n => n.id === selectedConnection.from_node_id)?.text.substring(0, 50)}
                   </p>
                   <p className="text-xs text-blue-600 font-medium mb-1">To:</p>
                   <p className="text-sm text-gray-800">
-                    {graphData?.nodes.find(n => n.id === selectedConnection.to_node_id)?.semantic_id ||
-                     graphData?.nodes.find(n => n.id === selectedConnection.to_node_id)?.text.substring(0, 30)}
+                    {graphData?.nodes.find(n => n.id === selectedConnection.to_node_id)?.text.substring(0, 50)}
                   </p>
                 </div>
 
                 {/* Connection Label */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Label
+                    Question
                   </label>
                   <input
                     type="text"
@@ -751,7 +802,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
                       .map(n => (
                         <option key={n.id} value={n.id}>
                           {n.node_type === 'Conclusion' ? '🎯 ' : '❓ '}
-                          {n.semantic_id || n.text.substring(0, 30)}{n.text.length > 30 ? '...' : ''}
+                          {n.text.substring(0, 50)}{n.text.length > 50 ? '...' : ''}
                         </option>
                       ))
                     }

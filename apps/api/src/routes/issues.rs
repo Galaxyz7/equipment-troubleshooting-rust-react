@@ -175,10 +175,10 @@ pub struct ImportError {
 pub async fn list_issues(State(state): State<AppState>) -> ApiResult<Json<Vec<Issue>>> {
     let issues = sqlx::query!(
         r#"
-        SELECT DISTINCT ON (category)
+        SELECT DISTINCT ON (n.category)
             n.id,
             COALESCE(n.category, 'uncategorized') as "category!",
-            COALESCE(n.category, 'Uncategorized') as "name!",
+            COALESCE(c.label, n.category, 'Uncategorized') as "name!",
             n.display_category,
             n.id as root_node_id,
             n.is_active,
@@ -186,7 +186,8 @@ pub async fn list_issues(State(state): State<AppState>) -> ApiResult<Json<Vec<Is
             n.updated_at,
             (SELECT COUNT(*) FROM nodes n2 WHERE n2.category = n.category OR (n2.category IS NULL AND n.category IS NULL)) as "question_count!"
         FROM nodes n
-        ORDER BY category, n.created_at ASC
+        LEFT JOIN connections c ON c.to_node_id = n.id AND c.from_node_id = (SELECT id FROM nodes WHERE semantic_id = 'start' LIMIT 1)
+        ORDER BY n.category, n.created_at ASC
         "#
     )
     .fetch_all(&state.db)
@@ -427,7 +428,7 @@ pub async fn create_issue(
 
     let node = sqlx::query_as::<_, Node>(
         "INSERT INTO nodes (id, category, node_type, text, semantic_id, display_category, is_active)
-         VALUES ($1, $2, 'question', $3, $4, $5, true)
+         VALUES ($1, $2, 'question', $3, $4, $5, false)
          RETURNING id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at"
     )
     .bind(node_id)
@@ -494,6 +495,39 @@ pub async fn update_issue(
     .await?
     .ok_or_else(|| ApiError::not_found("Issue not found"))?;
 
+    // Variable to track the updated name
+    let updated_name = if let Some(name) = &req.name {
+        // Update the connection label (where the issue name is actually stored)
+        // The connection goes from the 'start' node to this issue's root node
+        sqlx::query!(
+            r#"
+            UPDATE connections
+            SET label = $1
+            WHERE to_node_id = $2
+              AND from_node_id = (SELECT id FROM nodes WHERE semantic_id = 'start' LIMIT 1)
+            "#,
+            name,
+            node.id
+        )
+        .execute(&state.db)
+        .await?;
+        name.clone()
+    } else {
+        // Fetch current name from connection label
+        let conn = sqlx::query!(
+            r#"
+            SELECT label
+            FROM connections
+            WHERE to_node_id = $1
+              AND from_node_id = (SELECT id FROM nodes WHERE semantic_id = 'start' LIMIT 1)
+            "#,
+            node.id
+        )
+        .fetch_optional(&state.db)
+        .await?;
+        conn.map(|c| c.label).unwrap_or_else(|| category.clone())
+    };
+
     // Update display_category if provided
     if let Some(display_category) = &req.display_category {
         // Update all nodes in this category
@@ -530,7 +564,7 @@ pub async fn update_issue(
 
     Ok(Json(Issue {
         id: node.id.to_string(),
-        name: req.name.unwrap_or(category.clone()),
+        name: updated_name,
         category: category.clone(),
         display_category: node.display_category,
         root_question_id: node.id.to_string(),
