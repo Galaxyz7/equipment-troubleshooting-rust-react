@@ -1,5 +1,5 @@
 use crate::error::{ApiError, ApiResult};
-use crate::models::{Answer, Question, Node, Connection, IssueGraph};
+use crate::models::{Answer, Question, Node, Connection, IssueGraph, NodeType};
 use crate::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -89,6 +89,81 @@ pub struct AnswerDestination {
 pub struct IssueTree {
     pub issue: Issue,
     pub nodes: Vec<TreeNode>,
+}
+
+// ============================================
+// IMPORT/EXPORT TYPES
+// ============================================
+
+/// Export data for a single issue (used for backup/restore)
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct IssueExportData {
+    /// Issue metadata for import
+    pub issue: IssueImportMetadata,
+    /// All nodes in this issue category
+    pub nodes: Vec<NodeExportData>,
+    /// All connections between nodes
+    pub connections: Vec<ConnectionExportData>,
+}
+
+/// Issue metadata for import (without generated fields)
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct IssueImportMetadata {
+    pub name: String,
+    pub category: String,
+    pub display_category: Option<String>,
+    pub root_question_text: String,
+}
+
+/// Node data for export (with index references instead of UUIDs)
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct NodeExportData {
+    pub node_type: String, // "Question" or "Conclusion"
+    pub text: String,
+    pub semantic_id: Option<String>,
+    pub position_x: Option<f64>,
+    pub position_y: Option<f64>,
+}
+
+/// Connection data for export (with node array indices instead of UUIDs)
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct ConnectionExportData {
+    /// Index in nodes array (not UUID)
+    pub from_node_index: usize,
+    /// Index in nodes array (not UUID)
+    pub to_node_index: usize,
+    pub label: String,
+    pub order_index: i32,
+}
+
+/// Result of importing issues
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct ImportResult {
+    pub success: Vec<ImportSuccess>,
+    pub errors: Vec<ImportError>,
+}
+
+/// Successfully imported issue
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct ImportSuccess {
+    pub category: String,
+    pub name: String,
+    pub nodes_count: usize,
+    pub connections_count: usize,
+}
+
+/// Error during import
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct ImportError {
+    pub category: String,
+    pub error: String,
 }
 
 // ============================================
@@ -567,11 +642,19 @@ pub async fn toggle_issue(
     }))
 }
 
+/// Query parameters for delete issue endpoint
+#[derive(Debug, serde::Deserialize)]
+pub struct DeleteIssueParams {
+    #[serde(default)]
+    pub delete_sessions: bool,
+}
+
 /// DELETE /api/admin/issues/:category
 /// Delete entire issue and all its nodes/connections (NODE-GRAPH VERSION)
 pub async fn delete_issue(
     State(state): State<AppState>,
     Path(category): Path<String>,
+    Query(params): Query<DeleteIssueParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // Check if issue exists
     let count = sqlx::query!(
@@ -603,9 +686,330 @@ pub async fn delete_issue(
     .execute(&state.db)
     .await?;
 
+    let nodes_deleted = result.rows_affected();
+
+    // Optionally delete all sessions associated with this category
+    let sessions_deleted = if params.delete_sessions {
+        let sessions_result = sqlx::query(
+            "DELETE FROM sessions WHERE (steps->0->>'category')::text = $1"
+        )
+        .bind(&category)
+        .execute(&state.db)
+        .await?;
+
+        let count = sessions_result.rows_affected();
+        tracing::info!("🗑️  Deleted {} sessions for category '{}'", count, category);
+        count
+    } else {
+        0
+    };
+
     Ok(Json(serde_json::json!({
         "success": true,
-        "deleted_count": result.rows_affected(),
+        "deleted_count": nodes_deleted,
+        "sessions_deleted": sessions_deleted,
         "message": format!("Issue '{}' deleted successfully", category)
     })))
+}
+
+// ============================================
+// IMPORT/EXPORT ENDPOINTS
+// ============================================
+
+/// GET /api/admin/issues/:category/export
+/// Export a single issue with all its nodes and connections as JSON
+pub async fn export_issue(
+    State(state): State<AppState>,
+    Path(category): Path<String>,
+) -> ApiResult<Json<IssueExportData>> {
+    tracing::info!("📦 Exporting issue: {}", category);
+
+    // Get all nodes for this category
+    let nodes = sqlx::query_as::<_, Node>(
+        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
+         FROM nodes
+         WHERE category = $1 AND is_active = true
+         ORDER BY created_at ASC"
+    )
+    .bind(&category)
+    .fetch_all(&state.db)
+    .await?;
+
+    if nodes.is_empty() {
+        return Err(ApiError::not_found("Issue category not found"));
+    }
+
+    // Build ID to index mapping (use UUID as key)
+    let mut id_to_index = std::collections::HashMap::new();
+    for (index, node) in nodes.iter().enumerate() {
+        id_to_index.insert(node.id, index);
+    }
+
+    // Get the root node to extract issue metadata
+    let root_node = nodes.iter().find(|n| n.semantic_id.as_ref().map(|s| s.ends_with("_start")).unwrap_or(false))
+        .ok_or_else(|| ApiError::not_found("Root node not found for issue"))?;
+
+    // Get issue name from database (try to find it via display_category or use category)
+    let issue_name = root_node.display_category.clone().unwrap_or_else(|| category.clone());
+
+    // Export nodes (without UUIDs)
+    let export_nodes: Vec<NodeExportData> = nodes.iter().map(|n| NodeExportData {
+        node_type: match n.node_type {
+            NodeType::Question => "question".to_string(),
+            NodeType::Conclusion => "conclusion".to_string(),
+        },
+        text: n.text.clone(),
+        semantic_id: n.semantic_id.clone(),
+        position_x: n.position_x,
+        position_y: n.position_y,
+    }).collect();
+
+    // Get all node IDs for connection query
+    let node_ids: Vec<Uuid> = nodes.iter().map(|n| n.id).collect();
+
+    // Get all connections
+    let connections = if !node_ids.is_empty() {
+        sqlx::query_as::<_, Connection>(
+            "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
+             FROM connections
+             WHERE from_node_id = ANY($1) AND is_active = true
+             ORDER BY from_node_id, order_index ASC"
+        )
+        .bind(&node_ids)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
+
+    // Export connections (with indices instead of UUIDs)
+    let export_connections: Vec<ConnectionExportData> = connections.iter().filter_map(|c| {
+        let from_index = id_to_index.get(&c.from_node_id)?;
+        let to_index = id_to_index.get(&c.to_node_id)?;
+        Some(ConnectionExportData {
+            from_node_index: *from_index,
+            to_node_index: *to_index,
+            label: c.label.clone(),
+            order_index: c.order_index,
+        })
+    }).collect();
+
+    let export_data = IssueExportData {
+        issue: IssueImportMetadata {
+            name: issue_name,
+            category: category.clone(),
+            display_category: root_node.display_category.clone(),
+            root_question_text: root_node.text.clone(),
+        },
+        nodes: export_nodes,
+        connections: export_connections,
+    };
+
+    tracing::info!("✅ Exported issue {} ({} nodes, {} connections)", category, nodes.len(), connections.len());
+
+    Ok(Json(export_data))
+}
+
+/// GET /api/admin/issues/export-all
+/// Export all issues as a JSON array
+pub async fn export_all_issues(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<IssueExportData>>> {
+    tracing::info!("📦 Exporting all issues");
+
+    // Get all distinct categories (excluding 'root' and utility categories)
+    let categories: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT category FROM nodes
+         WHERE category NOT IN ('root', 'electrical', 'general', 'mechanical')
+         AND is_active = true
+         ORDER BY category ASC"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut all_exports = Vec::new();
+
+    for category in categories {
+        // Reuse the single export logic
+        match export_issue(State(state.clone()), Path(category.clone())).await {
+            Ok(Json(export_data)) => all_exports.push(export_data),
+            Err(e) => {
+                tracing::warn!("⚠️  Failed to export issue {}: {:?}", category, e);
+                continue;
+            }
+        }
+    }
+
+    tracing::info!("✅ Exported {} issues", all_exports.len());
+
+    Ok(Json(all_exports))
+}
+
+/// POST /api/admin/issues/import
+/// Import one or more issues from JSON
+pub async fn import_issues(
+    State(state): State<AppState>,
+    Json(data): Json<Vec<IssueExportData>>,
+) -> ApiResult<Json<ImportResult>> {
+    tracing::info!("📥 Importing {} issue(s)", data.len());
+
+    let mut success_list = Vec::new();
+    let mut error_list = Vec::new();
+
+    for issue_data in data {
+        let category = issue_data.issue.category.clone();
+
+        // Check if category already exists
+        let existing_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM nodes WHERE category = $1"
+        )
+        .bind(&category)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        if existing_count > 0 {
+            error_list.push(ImportError {
+                category: category.clone(),
+                error: format!("Issue with category '{}' already exists. Please delete it first or choose a different category.", category),
+            });
+            continue;
+        }
+
+        // Start transaction for atomicity
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error_list.push(ImportError {
+                    category: category.clone(),
+                    error: format!("Failed to start transaction: {}", e),
+                });
+                continue;
+            }
+        };
+
+        // Validate nodes
+        if issue_data.nodes.is_empty() {
+            error_list.push(ImportError {
+                category: category.clone(),
+                error: "Issue must have at least one node".to_string(),
+            });
+            continue;
+        }
+
+        // Create nodes and build mapping
+        let mut node_ids = Vec::new();
+        let mut error_msg: Option<String> = None;
+
+        for node_data in &issue_data.nodes {
+            let node_id = Uuid::new_v4();
+            let node_type = node_data.node_type.as_str();
+
+            // Validate node_type (lowercase as per model definition)
+            if node_type != "question" && node_type != "conclusion" {
+                error_msg = Some(format!("Invalid node_type: '{}'. Must be 'question' or 'conclusion'", node_type));
+                break;
+            }
+
+            match sqlx::query!(
+                "INSERT INTO nodes (id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)",
+                node_id,
+                &category,
+                node_type,
+                &node_data.text,
+                node_data.semantic_id.as_deref(),
+                issue_data.issue.display_category.as_deref(),
+                node_data.position_x,
+                node_data.position_y,
+            )
+            .execute(&mut *tx)
+            .await {
+                Ok(_) => node_ids.push(node_id),
+                Err(e) => {
+                    error_msg = Some(format!("Failed to create node: {}", e));
+                    break;
+                }
+            }
+        }
+
+        // If there was an error, rollback and continue to next issue
+        if let Some(err) = error_msg {
+            let _ = tx.rollback().await;
+            error_list.push(ImportError {
+                category: category.clone(),
+                error: err,
+            });
+            continue;
+        }
+
+        // Create connections
+        let mut connections_created = 0;
+        let mut conn_error_msg: Option<String> = None;
+
+        for conn_data in &issue_data.connections {
+            // Validate indices
+            if conn_data.from_node_index >= node_ids.len() || conn_data.to_node_index >= node_ids.len() {
+                conn_error_msg = Some(format!("Invalid connection: node index out of bounds"));
+                break;
+            }
+
+            let from_id = node_ids[conn_data.from_node_index];
+            let to_id = node_ids[conn_data.to_node_index];
+
+            match sqlx::query!(
+                "INSERT INTO connections (from_node_id, to_node_id, label, order_index, is_active)
+                 VALUES ($1, $2, $3, $4, true)",
+                from_id,
+                to_id,
+                &conn_data.label,
+                conn_data.order_index,
+            )
+            .execute(&mut *tx)
+            .await {
+                Ok(_) => connections_created += 1,
+                Err(e) => {
+                    conn_error_msg = Some(format!("Failed to create connection: {}", e));
+                    break;
+                }
+            }
+        }
+
+        // If there was a connection error, rollback and continue to next issue
+        if let Some(err) = conn_error_msg {
+            let _ = tx.rollback().await;
+            error_list.push(ImportError {
+                category: category.clone(),
+                error: err,
+            });
+            continue;
+        }
+
+        // Commit transaction
+        match tx.commit().await {
+            Ok(_) => {
+                success_list.push(ImportSuccess {
+                    category: category.clone(),
+                    name: issue_data.issue.name.clone(),
+                    nodes_count: node_ids.len(),
+                    connections_count: connections_created,
+                });
+                tracing::info!("✅ Imported issue: {} ({} nodes, {} connections)",
+                    category, node_ids.len(), connections_created);
+            }
+            Err(e) => {
+                error_list.push(ImportError {
+                    category: category.clone(),
+                    error: format!("Failed to commit transaction: {}", e),
+                });
+            }
+        }
+    }
+
+    tracing::info!("📥 Import complete: {} succeeded, {} failed", success_list.len(), error_list.len());
+
+    Ok(Json(ImportResult {
+        success: success_list,
+        errors: error_list,
+    }))
 }

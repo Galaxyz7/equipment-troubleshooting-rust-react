@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import type { Issue } from '../types/issues';
+import DeleteIssueModal from './DeleteIssueModal';
 
 interface IssueCardProps {
   issue: Issue;
   onToggle: (category: string) => Promise<void>;
   onTest: (category: string) => void;
   onEdit: (category: string) => void;
-  onDelete: (category: string) => Promise<void>;
+  onDelete: (category: string, deleteSessions: boolean) => Promise<void>;
+  onExport: (category: string) => Promise<void>;
 }
 
-export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete }: IssueCardProps) {
+export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete, onExport }: IssueCardProps) {
   const [toggling, setToggling] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const handleToggle = async () => {
     setToggling(true);
@@ -22,18 +24,12 @@ export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete }:
     }
   };
 
-  const handleDelete = async () => {
-    if (!confirm(`Are you sure you want to delete the issue "${issue.name}"? This will delete all ${issue.question_count} questions in this category and cannot be undone.`)) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    setShowDeleteModal(true);
+  };
 
-    setDeleting(true);
-    try {
-      await onDelete(issue.category);
-    } catch (error) {
-      console.error('Error deleting issue:', error);
-      setDeleting(false);
-    }
+  const handleDeleteConfirm = async (category: string, deleteSessions: boolean) => {
+    await onDelete(category, deleteSessions);
   };
 
   return (
@@ -94,15 +90,26 @@ export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete }:
           🧪 Test
         </button>
         <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className={`px-3 py-[6px] text-[0.9em] rounded-md bg-[#f44336] text-white border-none transition-transform duration-200 hover:-translate-y-0.5 ${
-            deleting ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-          }`}
+          onClick={() => onExport(issue.category)}
+          className="px-3 py-[6px] text-[0.9em] rounded-md bg-[#3b82f6] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5"
         >
-          {deleting ? '...' : '🗑️ Delete'}
+          📤 Export
+        </button>
+        <button
+          onClick={handleDeleteClick}
+          className="px-3 py-[6px] text-[0.9em] rounded-md bg-[#f44336] text-white border-none transition-transform duration-200 hover:-translate-y-0.5 cursor-pointer"
+        >
+          🗑️ Delete
         </button>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <DeleteIssueModal
+        issue={issue}
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }

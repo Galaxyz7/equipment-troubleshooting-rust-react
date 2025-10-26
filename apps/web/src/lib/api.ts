@@ -9,12 +9,15 @@ import type {
   SessionsListResponse,
   DashboardStats,
   AuditLogsResponse,
+  DeleteSessionsResponse,
 } from '../types/troubleshoot';
 import type {
   Issue,
   CreateIssueRequest,
   UpdateIssueRequest,
   IssueTree,
+  IssueExportData,
+  ImportResult,
 } from '../types/issues';
 import type {
   Node,
@@ -175,6 +178,16 @@ export const adminAPI = {
     const { data } = await api.get<AuditLogsResponse>('/api/admin/audit-logs');
     return data;
   },
+
+  getSessionsCount: async (params: URLSearchParams): Promise<{ count: number }> => {
+    const { data } = await api.get<{ count: number }>(`/api/admin/sessions/count?${params.toString()}`);
+    return data;
+  },
+
+  deleteSessions: async (params: URLSearchParams): Promise<DeleteSessionsResponse> => {
+    const { data } = await api.delete<DeleteSessionsResponse>(`/api/admin/sessions?${params.toString()}`);
+    return data;
+  },
 };
 
 export const issuesAPI = {
@@ -209,8 +222,24 @@ export const issuesAPI = {
     return data;
   },
 
-  delete: async (category: string): Promise<void> => {
-    await api.delete(`/api/admin/issues/${category}`);
+  delete: async (category: string, deleteSessions?: boolean): Promise<void> => {
+    const params = deleteSessions ? '?delete_sessions=true' : '';
+    await api.delete(`/api/admin/issues/${category}${params}`);
+  },
+
+  exportIssue: async (category: string): Promise<IssueExportData> => {
+    const { data } = await api.get<IssueExportData>(`/api/admin/issues/${category}/export`);
+    return data;
+  },
+
+  exportAll: async (): Promise<IssueExportData[]> => {
+    const { data } = await api.get<IssueExportData[]>('/api/admin/issues/export-all');
+    return data;
+  },
+
+  importIssues: async (issues: IssueExportData[]): Promise<ImportResult> => {
+    const { data } = await api.post<ImportResult>('/api/admin/issues/import', issues);
+    return data;
   },
 };
 

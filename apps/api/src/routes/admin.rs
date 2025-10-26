@@ -113,6 +113,21 @@ pub struct StatsQueryParams {
     pub category: Option<String>,
 }
 
+/// Query parameters for delete sessions endpoint
+#[derive(Debug, Deserialize)]
+pub struct DeleteSessionsParams {
+    pub time_range: Option<String>, // "all_time", "past_month", "past_week", "today"
+    pub category: Option<String>,   // Issue category to filter by
+    pub status: Option<String>,     // "all", "completed", "abandoned", "active"
+}
+
+/// Response for delete sessions endpoint
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct DeleteSessionsResponse {
+    pub deleted_count: i64,
+}
+
 /// GET /api/admin/sessions
 /// List all sessions with pagination and filters (ADMIN only)
 pub async fn list_sessions(
@@ -512,6 +527,186 @@ pub async fn get_performance_metrics(
             },
         },
     }))
+}
+
+/// DELETE /api/admin/sessions
+/// Delete sessions based on filters (ADMIN only)
+pub async fn delete_sessions(
+    State(state): State<AppState>,
+    Query(params): Query<DeleteSessionsParams>,
+) -> ApiResult<Json<DeleteSessionsResponse>> {
+    // Build WHERE clause based on filters
+    let mut conditions: Vec<String> = vec![];
+
+    // Time range filter based on started_at
+    if let Some(time_range) = &params.time_range {
+        match time_range.as_str() {
+            "today" => {
+                conditions.push("started_at >= CURRENT_DATE".to_string());
+            }
+            "past_week" => {
+                conditions.push("started_at >= NOW() - INTERVAL '7 days'".to_string());
+            }
+            "past_month" => {
+                conditions.push("started_at >= NOW() - INTERVAL '30 days'".to_string());
+            }
+            "all_time" => {
+                // No time filter, all sessions
+            }
+            _ => {
+                tracing::warn!("Invalid time_range value: {}", time_range);
+            }
+        }
+    }
+
+    // Category filter (issue category)
+    if let Some(category) = &params.category {
+        conditions.push(format!(
+            "(steps->0->>'category')::text = '{}'",
+            category.replace("'", "''") // SQL injection prevention
+        ));
+    }
+
+    // Status filter
+    if let Some(status) = &params.status {
+        match status.as_str() {
+            "completed" => {
+                conditions.push("completed_at IS NOT NULL".to_string());
+            }
+            "abandoned" => {
+                conditions.push(
+                    "(abandoned = true OR (completed_at IS NULL AND started_at <= NOW() - INTERVAL '1 hour'))".to_string()
+                );
+            }
+            "active" => {
+                conditions.push("completed_at IS NULL".to_string());
+                conditions.push("abandoned = false".to_string());
+                conditions.push("started_at > NOW() - INTERVAL '1 hour'".to_string());
+            }
+            "all" => {
+                // No status filter
+            }
+            _ => {
+                tracing::warn!("Invalid status value: {}", status);
+            }
+        }
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    // Build and execute DELETE query
+    let delete_query = format!("DELETE FROM sessions {}", where_clause);
+
+    tracing::info!(
+        "🗑️  Executing session deletion with filters - time_range: {:?}, category: {:?}, status: {:?}",
+        params.time_range,
+        params.category,
+        params.status
+    );
+    tracing::debug!("Delete query: {}", delete_query);
+
+    let result = match sqlx::query(&delete_query).execute(&state.db).await {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("❌ Error deleting sessions: {:?}", e);
+            return Err(crate::error::ApiError::internal(
+                "Failed to delete sessions",
+            ));
+        }
+    };
+
+    let deleted_count = result.rows_affected() as i64;
+
+    tracing::info!("✅ Successfully deleted {} sessions", deleted_count);
+
+    Ok(Json(DeleteSessionsResponse { deleted_count }))
+}
+
+/// GET /api/admin/sessions/count
+/// Get count of sessions matching filters (for preview before delete)
+pub async fn count_sessions(
+    State(state): State<AppState>,
+    Query(params): Query<DeleteSessionsParams>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Build WHERE clause based on filters (same logic as delete_sessions)
+    let mut conditions: Vec<String> = vec![];
+
+    // Time range filter
+    if let Some(time_range) = &params.time_range {
+        match time_range.as_str() {
+            "today" => {
+                conditions.push("started_at >= CURRENT_DATE".to_string());
+            }
+            "past_week" => {
+                conditions.push("started_at >= NOW() - INTERVAL '7 days'".to_string());
+            }
+            "past_month" => {
+                conditions.push("started_at >= NOW() - INTERVAL '30 days'".to_string());
+            }
+            "all_time" => {}
+            _ => {
+                tracing::warn!("Invalid time_range value: {}", time_range);
+            }
+        }
+    }
+
+    // Category filter
+    if let Some(category) = &params.category {
+        conditions.push(format!(
+            "(steps->0->>'category')::text = '{}'",
+            category.replace("'", "''")
+        ));
+    }
+
+    // Status filter
+    if let Some(status) = &params.status {
+        match status.as_str() {
+            "completed" => {
+                conditions.push("completed_at IS NOT NULL".to_string());
+            }
+            "abandoned" => {
+                conditions.push(
+                    "(abandoned = true OR (completed_at IS NULL AND started_at <= NOW() - INTERVAL '1 hour'))".to_string()
+                );
+            }
+            "active" => {
+                conditions.push("completed_at IS NULL".to_string());
+                conditions.push("abandoned = false".to_string());
+                conditions.push("started_at > NOW() - INTERVAL '1 hour'".to_string());
+            }
+            "all" => {}
+            _ => {
+                tracing::warn!("Invalid status value: {}", status);
+            }
+        }
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let count_query = format!("SELECT COUNT(*) FROM sessions {}", where_clause);
+
+    let count = match sqlx::query_scalar::<_, i64>(&count_query)
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::error!("❌ Error counting sessions: {:?}", e);
+            return Err(crate::error::ApiError::internal(
+                "Failed to count sessions",
+            ));
+        }
+    };
+
+    Ok(Json(serde_json::json!({ "count": count })))
 }
 
 #[cfg(test)]

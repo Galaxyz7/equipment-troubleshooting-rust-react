@@ -5,6 +5,7 @@ import type { Issue } from '../types/issues';
 import IssueCard from '../components/IssueCard';
 import TreeEditorModal from '../components/TreeEditorModal';
 import CreateIssueModal from '../components/CreateIssueModal';
+import ImportModal from '../components/ImportModal';
 
 export default function IssuesListPage() {
   const navigate = useNavigate();
@@ -13,6 +14,8 @@ export default function IssuesListPage() {
   const [error, setError] = useState<string | null>(null);
   const [editingIssue, setEditingIssue] = useState<Issue | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadIssues();
@@ -80,10 +83,10 @@ export default function IssuesListPage() {
     }
   };
 
-  const handleDelete = async (category: string) => {
+  const handleDelete = async (category: string, deleteSessions: boolean = false) => {
     setError(null);
     try {
-      await issuesAPI.delete(category);
+      await issuesAPI.delete(category, deleteSessions);
       setIssues(issues.filter(issue => issue.category !== category));
     } catch (err: any) {
       const errorMessage = err.response?.data?.error?.data?.message ||
@@ -99,6 +102,53 @@ export default function IssuesListPage() {
 
   const handleIssueCreated = (newIssue: Issue) => {
     setIssues([...issues, newIssue].sort((a, b) => a.name.localeCompare(b.name)));
+  };
+
+  const handleExportAll = async () => {
+    setError(null);
+    try {
+      const data = await issuesAPI.exportAll();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `issues-export-${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setSuccessMessage('All issues exported successfully!');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.error?.data?.message ||
+                          'Failed to export issues. Please try again.';
+      setError(errorMessage);
+      console.error('Error exporting issues:', err);
+    }
+  };
+
+  const handleExportSingle = async (category: string) => {
+    setError(null);
+    try {
+      const data = await issuesAPI.exportIssue(category);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `issue-${category}-${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setSuccessMessage(`Issue "${category}" exported successfully!`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.error?.data?.message ||
+                          'Failed to export issue. Please try again.';
+      setError(errorMessage);
+      console.error('Error exporting issue:', err);
+    }
+  };
+
+  const handleImportComplete = () => {
+    setShowImportModal(false);
+    loadIssues(); // Reload issues after import
   };
 
   const handleLogout = () => {
@@ -152,16 +202,36 @@ export default function IssuesListPage() {
           </div>
         )}
 
+        {successMessage && (
+          <div className="mb-5 p-[15px] rounded-lg bg-[#efe] text-[#3c3] border border-[#cfc]">
+            {successMessage}
+          </div>
+        )}
+
         <div className="flex justify-between items-center mb-5">
           <h2 className="text-[1.5em] font-bold text-gray-800 m-0">
             Troubleshooting Issues ({issues.length})
           </h2>
-          <button
-            onClick={handleCreateNew}
-            className="px-5 py-[10px] rounded-md bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
-          >
-            + Create New Issue
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowImportModal(true)}
+              className="px-5 py-[10px] rounded-md bg-[#10b981] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
+            >
+              📥 Import
+            </button>
+            <button
+              onClick={handleExportAll}
+              className="px-5 py-[10px] rounded-md bg-[#3b82f6] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
+            >
+              📤 Export All
+            </button>
+            <button
+              onClick={handleCreateNew}
+              className="px-5 py-[10px] rounded-md bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
+            >
+              + Create New Issue
+            </button>
+          </div>
         </div>
 
         <div className="mb-5 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -186,6 +256,7 @@ export default function IssuesListPage() {
                 onTest={handleTest}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
+                onExport={handleExportSingle}
               />
             ))}
           </div>
@@ -210,6 +281,13 @@ export default function IssuesListPage() {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onCreate={handleIssueCreated}
+      />
+
+      {/* Import Modal */}
+      <ImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={handleImportComplete}
       />
     </div>
   );

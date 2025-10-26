@@ -13,3 +13,4 @@ export * from './ConclusionStats';
 export * from './CategoryStats';
 export * from './AuditLogsResponse';
 export * from './AuditLogEntry';
+export * from './DeleteSessionsResponse';

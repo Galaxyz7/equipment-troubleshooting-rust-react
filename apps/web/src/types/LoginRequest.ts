@@ -3,4 +3,8 @@
 /**
  * Login request payload
  */
-export type LoginRequest = { email: string, password: string, remember_me?: boolean, };
+export type LoginRequest = { email: string, password: string, 
+/**
+ * If true, token will not expire. If false, token expires in 15 minutes.
+ */
+remember_me: boolean, };

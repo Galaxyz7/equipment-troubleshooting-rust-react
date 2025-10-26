@@ -27,6 +27,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
 
     render(
       <IssueCard
@@ -35,6 +36,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 
@@ -58,6 +60,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
 
     render(
       <IssueCard
@@ -66,6 +69,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 
@@ -78,6 +82,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
 
     render(
       <IssueCard
@@ -86,6 +91,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 
@@ -97,6 +103,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
     const user = userEvent.setup();
 
     render(
@@ -106,6 +113,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 
@@ -120,6 +128,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
     const user = userEvent.setup();
 
     render(
@@ -129,6 +138,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 
@@ -143,6 +153,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
     const user = userEvent.setup();
 
     render(
@@ -152,6 +163,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 
@@ -168,6 +180,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
 
     render(
       <IssueCard
@@ -176,6 +189,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 
@@ -189,6 +203,7 @@ describe('IssueCard', () => {
     const onTest = vi.fn();
     const onEdit = vi.fn();
     const onDelete = vi.fn().mockImplementation(() => new Promise(() => {})); // Never resolves
+    const onExport = vi.fn();
     const user = userEvent.setup();
 
     // Mock window.confirm to return true
@@ -201,6 +216,7 @@ describe('IssueCard', () => {
         onTest={onTest}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExport={onExport}
       />
     );
 

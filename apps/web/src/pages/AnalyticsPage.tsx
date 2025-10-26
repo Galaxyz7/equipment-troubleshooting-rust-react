@@ -2,12 +2,15 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminAPI } from '../lib/api';
 import type { DashboardStats, CategoryStats, ConclusionStats } from '../types/troubleshoot';
+import DataManagementModal from '../components/DataManagementModal';
 
 export default function AnalyticsPage() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showDataManagement, setShowDataManagement] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     loadStats();
@@ -17,11 +20,18 @@ export default function AnalyticsPage() {
     try {
       const data = await adminAPI.getStats();
       setStats(data);
+      setError('');
     } catch (err: any) {
       setError(err.response?.data?.error?.data?.message || 'Failed to load statistics');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDataManagementSuccess = () => {
+    setSuccessMessage('Sessions deleted successfully');
+    loadStats(); // Refresh stats
+    setTimeout(() => setSuccessMessage(''), 5000);
   };
 
   if (loading) {
@@ -75,9 +85,25 @@ export default function AnalyticsPage() {
               <h1 className="text-3xl font-bold text-gray-900">Analytics Dashboard</h1>
               <p className="text-gray-600 mt-1">Troubleshooting session insights</p>
             </div>
+            <button
+              onClick={() => setShowDataManagement(true)}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium inline-flex items-center"
+            >
+              <span className="mr-2">🗑️</span>
+              Data Management
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Success Message */}
+      {successMessage && (
+        <div className="max-w-7xl mx-auto px-6 pt-6">
+          <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
+            {successMessage}
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="max-w-7xl mx-auto px-6 py-8">
@@ -170,6 +196,13 @@ export default function AnalyticsPage() {
           </div>
         )}
       </div>
+
+      {/* Data Management Modal */}
+      <DataManagementModal
+        isOpen={showDataManagement}
+        onClose={() => setShowDataManagement(false)}
+        onSuccess={handleDataManagementSuccess}
+      />
     </div>
   );
 }
