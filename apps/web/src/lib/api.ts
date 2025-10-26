@@ -188,6 +188,21 @@ export const adminAPI = {
     const { data } = await api.delete<DeleteSessionsResponse>(`/api/admin/sessions?${params.toString()}`);
     return data;
   },
+
+  getCategories: async (): Promise<{ categories: string[] }> => {
+    const { data } = await api.get<{ categories: string[] }>('/api/admin/categories');
+    return data;
+  },
+
+  renameCategory: async (oldName: string, newName: string): Promise<{ updated_count: number }> => {
+    const { data } = await api.put<{ updated_count: number }>(`/api/admin/categories/${encodeURIComponent(oldName)}`, { new_name: newName });
+    return data;
+  },
+
+  deleteCategory: async (name: string): Promise<{ updated_count: number }> => {
+    const { data } = await api.delete<{ updated_count: number }>(`/api/admin/categories/${encodeURIComponent(name)}`);
+    return data;
+  },
 };
 
 export const issuesAPI = {

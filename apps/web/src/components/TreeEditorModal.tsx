@@ -12,6 +12,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { issuesAPI, nodesAPI, connectionsAPI } from '../lib/api';
 import type { IssueGraph, UpdateNode, UpdateConnection } from '../types';
+import CategoryCombobox from './CategoryCombobox';
 
 interface TreeEditorModalProps {
   category: string;
@@ -564,17 +565,16 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
                 />
               </div>
               <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Display Category (optional)</label>
-                <input
-                  type="text"
+                <CategoryCombobox
                   value={editingDisplayCategory}
-                  onChange={(e) => {
-                    setEditingDisplayCategory(e.target.value);
+                  onChange={(value) => {
+                    setEditingDisplayCategory(value);
                     setHasUnsavedIssueChanges(true);
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                  placeholder="e.g., Electrical, Mechanical, General"
+                  placeholder="Type to search or create"
+                  className="text-sm"
                 />
+                <label className="block text-xs font-medium text-gray-600 mt-1">Display Category (optional)</label>
               </div>
             </div>
             <p className="text-xs text-gray-500 mt-2">

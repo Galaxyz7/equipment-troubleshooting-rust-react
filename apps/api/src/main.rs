@@ -150,6 +150,10 @@ async fn main() {
         .route("/api/admin/stats", get(routes::admin::get_stats))
         .route("/api/admin/audit-logs", get(routes::admin::get_audit_logs))
         .route("/api/admin/performance", get(routes::admin::get_performance_metrics))
+        // Category management routes
+        .route("/api/admin/categories", get(routes::admin::list_categories))
+        .route("/api/admin/categories/:old_name", put(routes::admin::rename_category))
+        .route("/api/admin/categories/:name", delete(routes::admin::delete_category))
         // Issues management routes
         .route("/api/admin/issues", get(routes::issues::list_issues))
         .route("/api/admin/issues", post(routes::issues::create_issue))

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { issuesAPI } from '../lib/api';
 import type { Issue } from '../types/issues';
+import CategoryCombobox from './CategoryCombobox';
 
 interface CreateIssueModalProps {
   isOpen: boolean;
@@ -127,31 +128,15 @@ export default function CreateIssueModal({ isOpen, onClose, onCreate }: CreateIs
           </div>
 
           {/* Display Category */}
-          <div>
-            <label htmlFor="display-category" className="block text-sm font-medium text-gray-700 mb-2">
-              Display Category <span className="text-gray-400">(optional)</span>
-            </label>
-            <select
-              id="display-category"
-              value={displayCategory}
-              onChange={(e) => setDisplayCategory(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-colors"
-              disabled={loading}
-            >
-              <option value="">None</option>
-              <option value="Electrical">Electrical</option>
-              <option value="Mechanical">Mechanical</option>
-              <option value="General">General</option>
-              <option value="Software">Software</option>
-              <option value="Hardware">Hardware</option>
-              <option value="Maintenance">Maintenance</option>
-              <option value="Safety">Safety</option>
-            </select>
-            <p className="text-gray-500 text-sm mt-1 flex items-center">
-              <span className="mr-1">💡</span>
-              Groups related issues together in the user interface
-            </p>
-          </div>
+          <CategoryCombobox
+            value={displayCategory}
+            onChange={setDisplayCategory}
+            disabled={loading}
+            placeholder="Type to search or create a new category"
+            label="Display Category"
+            optional={true}
+            description="Groups related issues together in the user interface"
+          />
 
           {/* First Question */}
           <div>

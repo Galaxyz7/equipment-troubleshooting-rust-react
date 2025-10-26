@@ -709,6 +709,97 @@ pub async fn count_sessions(
     Ok(Json(serde_json::json!({ "count": count })))
 }
 
+/// Response for listing categories
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct CategoryListResponse {
+    pub categories: Vec<String>,
+}
+
+/// Request for renaming a category
+#[derive(Debug, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct RenameCategoryRequest {
+    pub new_name: String,
+}
+
+/// Response for category update operations
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
+pub struct CategoryUpdateResponse {
+    pub updated_count: u64,
+}
+
+/// GET /api/admin/categories
+/// List all unique display_category values
+pub async fn list_categories(State(state): State<AppState>) -> ApiResult<Json<CategoryListResponse>> {
+    let categories = sqlx::query!(
+        r#"
+        SELECT DISTINCT display_category
+        FROM nodes
+        WHERE display_category IS NOT NULL
+        ORDER BY display_category ASC
+        "#
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let category_list: Vec<String> = categories
+        .into_iter()
+        .filter_map(|row| row.display_category)
+        .collect();
+
+    Ok(Json(CategoryListResponse {
+        categories: category_list,
+    }))
+}
+
+/// PUT /api/admin/categories/:old_name
+/// Rename a category (updates all nodes using it)
+pub async fn rename_category(
+    State(state): State<AppState>,
+    axum::extract::Path(old_name): axum::extract::Path<String>,
+    Json(req): Json<RenameCategoryRequest>,
+) -> ApiResult<Json<CategoryUpdateResponse>> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE nodes
+        SET display_category = $1
+        WHERE display_category = $2
+        "#,
+        req.new_name,
+        old_name
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(CategoryUpdateResponse {
+        updated_count: result.rows_affected(),
+    }))
+}
+
+/// DELETE /api/admin/categories/:name
+/// Delete a category by setting display_category to NULL for all nodes using it
+pub async fn delete_category(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> ApiResult<Json<CategoryUpdateResponse>> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE nodes
+        SET display_category = NULL
+        WHERE display_category = $1
+        "#,
+        name
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(CategoryUpdateResponse {
+        updated_count: result.rows_affected(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

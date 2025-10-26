@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { adminAPI } from '../lib/api';
 import type { DashboardStats, CategoryStats, ConclusionStats } from '../types/troubleshoot';
 import DataManagementModal from '../components/DataManagementModal';
+import CategoryManagementModal from '../components/CategoryManagementModal';
 
 export default function AnalyticsPage() {
   const navigate = useNavigate();
@@ -10,6 +11,7 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showDataManagement, setShowDataManagement] = useState(false);
+  const [showCategoryManagement, setShowCategoryManagement] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
@@ -85,13 +87,22 @@ export default function AnalyticsPage() {
               <h1 className="text-3xl font-bold text-gray-900">Analytics Dashboard</h1>
               <p className="text-gray-600 mt-1">Troubleshooting session insights</p>
             </div>
-            <button
-              onClick={() => setShowDataManagement(true)}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium inline-flex items-center"
-            >
-              <span className="mr-2">🗑️</span>
-              Data Management
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowCategoryManagement(true)}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium inline-flex items-center"
+              >
+                <span className="mr-2">🏷️</span>
+                Manage Categories
+              </button>
+              <button
+                onClick={() => setShowDataManagement(true)}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium inline-flex items-center"
+              >
+                <span className="mr-2">🗑️</span>
+                Data Management
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -202,6 +213,16 @@ export default function AnalyticsPage() {
         isOpen={showDataManagement}
         onClose={() => setShowDataManagement(false)}
         onSuccess={handleDataManagementSuccess}
+      />
+
+      {/* Category Management Modal */}
+      <CategoryManagementModal
+        isOpen={showCategoryManagement}
+        onClose={() => setShowCategoryManagement(false)}
+        onSuccess={(message) => {
+          setSuccessMessage(message);
+          setTimeout(() => setSuccessMessage(''), 5000);
+        }}
       />
     </div>
   );

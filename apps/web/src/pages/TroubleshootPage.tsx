@@ -193,7 +193,7 @@ export default function TroubleshootPage() {
                               {option.label}
                             </h3>
                             <p className="text-sm text-gray-600 mt-1">
-                              Category: {option.target_category}
+                              Category: {option.display_category || 'Uncategorized'}
                             </p>
                           </div>
                           <div className="flex-shrink-0">
