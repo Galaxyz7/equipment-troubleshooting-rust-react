@@ -282,6 +282,7 @@ pub async fn get_stats(
         WITH filtered_sessions AS (
             SELECT
                 session_id,
+                started_at,
                 completed_at,
                 abandoned,
                 final_conclusion,
@@ -293,9 +294,23 @@ pub async fn get_stats(
             SELECT
                 COALESCE(COUNT(*), 0) as total,
                 COALESCE(COUNT(*) FILTER (WHERE completed_at IS NOT NULL), 0) as completed,
-                COALESCE(COUNT(*) FILTER (WHERE abandoned = true), 0) as abandoned,
-                COALESCE(COUNT(*) FILTER (WHERE completed_at IS NULL AND abandoned = false), 0) as active,
-                COALESCE(AVG(jsonb_array_length(steps)) FILTER (WHERE completed_at IS NOT NULL), 0.0) as avg_steps
+                -- Abandoned = explicitly marked OR incomplete sessions older than 1 hour
+                COALESCE(COUNT(*) FILTER (
+                    WHERE abandoned = true
+                    OR (completed_at IS NULL AND started_at <= NOW() - INTERVAL '1 hour')
+                ), 0) as abandoned,
+                -- Active = incomplete, not abandoned, and started within the last hour
+                COALESCE(COUNT(*) FILTER (
+                    WHERE completed_at IS NULL
+                    AND abandoned = false
+                    AND started_at > NOW() - INTERVAL '1 hour'
+                ), 0) as active,
+                -- Average steps only for completed sessions with valid steps data
+                COALESCE(AVG(jsonb_array_length(steps)) FILTER (
+                    WHERE completed_at IS NOT NULL
+                    AND steps IS NOT NULL
+                    AND jsonb_array_length(steps) > 0
+                ), 0.0) as avg_steps
             FROM filtered_sessions
         ),
         conclusion_stats AS (
@@ -368,6 +383,19 @@ pub async fn get_stats(
     let abandoned_sessions: i64 = row.try_get("abandoned_sessions").unwrap_or(0);
     let active_sessions: i64 = row.try_get("active_sessions").unwrap_or(0);
     let avg_steps_to_completion: f64 = row.try_get("avg_steps_to_completion").unwrap_or(0.0);
+
+    // Debug logging to help diagnose avg_steps issues
+    tracing::debug!(
+        "📊 Stats: total={}, completed={}, abandoned={}, active={}, avg_steps={}",
+        total_sessions, completed_sessions, abandoned_sessions, active_sessions, avg_steps_to_completion
+    );
+
+    if completed_sessions > 0 && avg_steps_to_completion == 0.0 {
+        tracing::warn!(
+            "⚠️  Avg steps is 0.0 but {} completed sessions exist. Check if 'steps' field is NULL/empty in database.",
+            completed_sessions
+        );
+    }
 
     let conclusions_json: serde_json::Value = row.try_get("conclusions").unwrap_or(serde_json::json!([]));
     let most_common_conclusions: Vec<ConclusionStats> = serde_json::from_value(conclusions_json)
