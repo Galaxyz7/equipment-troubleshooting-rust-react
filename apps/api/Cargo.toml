@@ -2,6 +2,7 @@
 name = "equipment-troubleshooting"
 version = "2.0.0"
 edition = "2021"
+default-run = "equipment-troubleshooting"
 
 [lib]
 name = "equipment_troubleshooting"
@@ -30,8 +31,12 @@ tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 tokio-rustls = "0.25"
 rustls-pemfile = "2"
 
+# OpenAPI documentation
+utoipa = { version = "4", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "6", features = ["axum"] }
+
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -55,3 +60,8 @@ md5 = "0.7"
 
 [dev-dependencies]
 reqwest = { version = "0.11", features = ["json"] }
+axum-test = "15"
+http-body-util = "0.1"
+tower = { version = "0.4", features = ["util"] }
+serial_test = "3"
+rand = "0.8"

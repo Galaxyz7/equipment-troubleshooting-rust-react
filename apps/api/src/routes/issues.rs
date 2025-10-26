@@ -14,8 +14,8 @@ use uuid::Uuid;
 // ============================================
 
 /// Issue represents a top-level troubleshooting category
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct Issue {
     pub id: String,
     pub name: String,
@@ -30,7 +30,7 @@ pub struct Issue {
 
 /// Request to create a new issue
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct CreateIssueRequest {
     pub name: String,
     pub category: String,
@@ -40,7 +40,7 @@ pub struct CreateIssueRequest {
 
 /// Request to update issue metadata
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct UpdateIssueRequest {
     pub name: Option<String>,
     pub display_category: Option<String>,
@@ -55,16 +55,16 @@ pub struct ToggleIssueQuery {
 }
 
 /// Tree node representing a question and its branches
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct TreeNode {
     pub question: Question,
     pub answers: Vec<TreeAnswer>,
 }
 
 /// Answer with its destination information
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct TreeAnswer {
     pub id: String,
     pub label: String,
@@ -73,8 +73,8 @@ pub struct TreeAnswer {
 }
 
 /// Where an answer leads to
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct AnswerDestination {
     #[serde(rename = "type")]
     pub destination_type: String, // "question" or "conclusion"
@@ -84,8 +84,8 @@ pub struct AnswerDestination {
 }
 
 /// Complete tree structure for an issue
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct IssueTree {
     pub issue: Issue,
     pub nodes: Vec<TreeNode>,
@@ -136,11 +136,19 @@ pub async fn list_issues(State(state): State<AppState>) -> ApiResult<Json<Vec<Is
 }
 
 /// GET /api/admin/issues/:category/tree
-/// Get complete decision tree for an issue
+/// Get complete decision tree for an issue - Cached for 10 minutes, optimized queries
 pub async fn get_issue_tree(
     State(state): State<AppState>,
     Path(category): Path<String>,
 ) -> ApiResult<Json<IssueTree>> {
+    // Try to get from cache first
+    if let Some(cached) = state.issue_tree_cache.get(&category).await {
+        tracing::debug!("✅ Cache HIT: issue tree for {}", category);
+        return Ok(Json(serde_json::from_value(cached)?));
+    }
+
+    tracing::debug!("❌ Cache MISS: issue tree for {} - fetching from DB", category);
+
     // Get all questions in this category
     let questions = sqlx::query_as::<_, Question>(
         "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
@@ -170,39 +178,59 @@ pub async fn get_issue_tree(
         updated_at: first_question.updated_at.to_rfc3339(),
     };
 
+    // OPTIMIZATION: Fetch ALL answers for this category in one query instead of N queries
+    let question_ids: Vec<Uuid> = questions.iter().map(|q| q.id).collect();
+    let all_answers = sqlx::query_as::<_, Answer>(
+        "SELECT id, question_id, label, next_question_id, conclusion_text, order_index, is_active, created_at, updated_at
+         FROM answers
+         WHERE question_id = ANY($1)
+         ORDER BY question_id, order_index ASC",
+    )
+    .bind(&question_ids)
+    .fetch_all(&state.db)
+    .await?;
+
+    // OPTIMIZATION: Fetch ALL referenced questions in one query instead of N queries
+    let next_question_ids: Vec<Uuid> = all_answers
+        .iter()
+        .filter_map(|a| a.next_question_id)
+        .collect();
+
+    let next_questions = if !next_question_ids.is_empty() {
+        sqlx::query_as::<_, Question>(
+            "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
+             FROM questions
+             WHERE id = ANY($1)",
+        )
+        .bind(&next_question_ids)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
+
+    // Create lookup map for quick access
+    let question_map: std::collections::HashMap<Uuid, &Question> =
+        next_questions.iter().map(|q| (q.id, q)).collect();
+
     // Build tree nodes
     let mut nodes = Vec::new();
+    let mut answer_index = 0;
 
     for question in questions {
-        // Get answers for this question
-        let answers = sqlx::query_as::<_, Answer>(
-            "SELECT id, question_id, label, next_question_id, conclusion_text, order_index, is_active, created_at, updated_at
-             FROM answers
-             WHERE question_id = $1
-             ORDER BY order_index ASC",
-        )
-        .bind(question.id)
-        .fetch_all(&state.db)
-        .await?;
-
-        // Convert to TreeAnswer with destination info
         let mut tree_answers = Vec::new();
-        for answer in answers {
-            let destination = if let Some(next_q_id) = answer.next_question_id {
-                // Fetch the next question's text
-                let next_question = sqlx::query_as::<_, Question>(
-                    "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
-                     FROM questions
-                     WHERE id = $1",
-                )
-                .bind(next_q_id)
-                .fetch_optional(&state.db)
-                .await?;
 
+        // Get answers for this question from the fetched batch
+        while answer_index < all_answers.len()
+            && all_answers[answer_index].question_id == question.id
+        {
+            let answer = &all_answers[answer_index];
+
+            let destination = if let Some(next_q_id) = answer.next_question_id {
                 AnswerDestination {
                     destination_type: "question".to_string(),
                     question_id: Some(next_q_id.to_string()),
-                    question_text: next_question.map(|q| q.text),
+                    question_text: question_map.get(&next_q_id).map(|q| q.text.clone()),
                     conclusion_text: None,
                 }
             } else {
@@ -216,10 +244,12 @@ pub async fn get_issue_tree(
 
             tree_answers.push(TreeAnswer {
                 id: answer.id.to_string(),
-                label: answer.label,
+                label: answer.label.clone(),
                 order_index: answer.order_index,
                 destination,
             });
+
+            answer_index += 1;
         }
 
         nodes.push(TreeNode {
@@ -228,15 +258,29 @@ pub async fn get_issue_tree(
         });
     }
 
-    Ok(Json(IssueTree { issue, nodes }))
+    let result = IssueTree { issue, nodes };
+
+    // Store in cache
+    state.issue_tree_cache.set(category.clone(), serde_json::to_value(&result)?).await;
+
+    Ok(Json(result))
 }
 
 /// GET /api/admin/issues/:category/graph
-/// Get complete node graph for an issue category
+/// Get complete node graph for an issue category - Cached for 10 minutes
 pub async fn get_issue_graph(
     State(state): State<AppState>,
     Path(category): Path<String>,
 ) -> ApiResult<Json<IssueGraph>> {
+    // Try to get from cache first
+    let cache_key = format!("graph_{}", category);
+    if let Some(cached) = state.issue_graph_cache.get(&cache_key).await {
+        tracing::debug!("✅ Cache HIT: issue graph for {}", category);
+        return Ok(Json(serde_json::from_value(cached)?));
+    }
+
+    tracing::debug!("❌ Cache MISS: issue graph for {} - fetching from DB", category);
+
     // Get all active nodes in this category
     let nodes = sqlx::query_as::<_, Node>(
         "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
@@ -266,11 +310,16 @@ pub async fn get_issue_graph(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(IssueGraph {
-        category,
+    let result = IssueGraph {
+        category: category.clone(),
         nodes,
         connections,
-    }))
+    };
+
+    // Store in cache
+    state.issue_graph_cache.set(cache_key, serde_json::to_value(&result)?).await;
+
+    Ok(Json(result))
 }
 
 /// POST /api/admin/issues
@@ -300,7 +349,7 @@ pub async fn create_issue(
 
     sqlx::query!(
         "INSERT INTO nodes (id, category, node_type, text, semantic_id, display_category, is_active)
-         VALUES ($1, $2, 'question', $3, $4, $5, false)",
+         VALUES ($1, $2, 'question', $3, $4, $5, true)",
         node_id,
         &req.category,
         &req.root_question_text,
@@ -340,7 +389,7 @@ pub async fn create_issue(
         // Create a connection from the root node to this new issue node
         sqlx::query!(
             "INSERT INTO connections (from_node_id, to_node_id, label, order_index, is_active)
-             VALUES ($1, $2, $3, $4, false)",
+             VALUES ($1, $2, $3, $4, true)",
             root.id,
             node_id,
             &req.name,  // Use the issue name as the connection label
@@ -356,7 +405,7 @@ pub async fn create_issue(
         category: req.category,
         display_category: node.display_category,
         root_question_id: node.id.to_string(),
-        is_active: false,
+        is_active: node.is_active,
         question_count: 1,
         created_at: node.created_at.to_rfc3339(),
         updated_at: node.updated_at.to_rfc3339(),

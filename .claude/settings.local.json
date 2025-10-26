@@ -20,7 +20,16 @@
       "Bash(npm run build:*)",
       "Bash(sqlx database:*)",
       "Bash(set SQLX_OFFLINE=true)",
-      "Bash(cross-env SQLX_OFFLINE=true cargo run:*)"
+      "Bash(cross-env SQLX_OFFLINE=true cargo run:*)",
+      "Bash(cargo update:*)",
+      "Bash(tee:*)",
+      "Bash(pkill:*)",
+      "Bash(npm run lint)",
+      "Bash(npm ls:*)",
+      "Bash(taskkill:*)",
+      "Bash(timeout 300 cargo test:*)",
+      "Bash(cargo install:*)",
+      "Bash(npm test:*)"
     ],
     "deny": [],
     "ask": []

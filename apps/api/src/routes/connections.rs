@@ -182,21 +182,43 @@ pub async fn update_connection(
 }
 
 /// DELETE /api/connections/:id
-/// Soft delete connection (ADMIN only)
+/// Hard delete connection (ADMIN only)
 pub async fn delete_connection(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Connection>> {
+    // Fetch the connection first to return it and get category for cache invalidation
     let connection = sqlx::query_as::<_, Connection>(
-        "UPDATE connections
-         SET is_active = false, updated_at = NOW()
-         WHERE id = $1
-         RETURNING id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at"
+        "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
+         FROM connections
+         WHERE id = $1"
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| ApiError::not_found("Connection not found"))?;
+
+    // Get the from_node category for cache invalidation
+    let category = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT category FROM nodes WHERE id = $1"
+    )
+    .bind(connection.from_node_id)
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    // Delete the connection
+    sqlx::query("DELETE FROM connections WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    // Invalidate cache for the category
+    if let Some(category) = category {
+        let cache_key = format!("graph_{}", category);
+        state.issue_graph_cache.invalidate(&cache_key).await;
+        state.issue_tree_cache.invalidate(&category).await;
+    }
 
     Ok(Json(connection))
 }

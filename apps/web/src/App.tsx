@@ -4,6 +4,7 @@ import TroubleshootPage from './pages/TroubleshootPage';
 import ConclusionPage from './pages/ConclusionPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import IssuesListPage from './pages/IssuesListPage';
+import AnalyticsPage from './pages/AnalyticsPage';
 
 // Protected route component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -33,6 +34,14 @@ function App() {
           element={
             <ProtectedRoute>
               <IssuesListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/analytics"
+          element={
+            <ProtectedRoute>
+              <AnalyticsPage />
             </ProtectedRoute>
           }
         />

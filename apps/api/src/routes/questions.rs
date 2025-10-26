@@ -8,8 +8,18 @@ use axum::{
 use uuid::Uuid;
 
 /// GET /api/questions
-/// List all active questions (public)
+/// List all active questions (public) - Cached for 5 minutes
 pub async fn list_questions(State(state): State<AppState>) -> ApiResult<Json<Vec<Question>>> {
+    const CACHE_KEY: &str = "active_questions";
+
+    // Try to get from cache first
+    if let Some(cached) = state.questions_cache.get(&CACHE_KEY.to_string()).await {
+        tracing::debug!("✅ Cache HIT: questions list");
+        return Ok(Json(serde_json::from_value(cached)?));
+    }
+
+    // Cache miss - fetch from database
+    tracing::debug!("❌ Cache MISS: questions list - fetching from DB");
     let questions = sqlx::query_as::<_, Question>(
         "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
          FROM questions
@@ -18,6 +28,9 @@ pub async fn list_questions(State(state): State<AppState>) -> ApiResult<Json<Vec
     )
     .fetch_all(&state.db)
     .await?;
+
+    // Store in cache
+    state.questions_cache.set(CACHE_KEY.to_string(), serde_json::to_value(&questions)?).await;
 
     Ok(Json(questions))
 }
@@ -104,6 +117,9 @@ pub async fn create_question(
     .fetch_one(&state.db)
     .await?;
 
+    // Invalidate questions cache
+    state.questions_cache.invalidate(&"active_questions".to_string()).await;
+
     Ok(Json(question))
 }
 
@@ -167,26 +183,43 @@ pub async fn update_question(
 
     let question = query_builder.fetch_one(&state.db).await?;
 
+    // Invalidate questions cache
+    state.questions_cache.invalidate(&"active_questions".to_string()).await;
+
     Ok(Json(question))
 }
 
 /// DELETE /api/questions/:id
-/// Soft delete question (ADMIN only - middleware handles auth)
+/// Hard delete question and all its answers (ADMIN only - middleware handles auth)
 pub async fn delete_question(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Question>> {
-    // Soft delete by setting is_active = false
+    // Fetch the question first to return it after deletion
     let question = sqlx::query_as::<_, Question>(
-        "UPDATE questions
-         SET is_active = false, updated_at = NOW()
-         WHERE id = $1
-         RETURNING id, semantic_id, text, category, is_active, created_at, updated_at",
+        "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
+         FROM questions
+         WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| ApiError::not_found("Question not found"))?;
+
+    // Delete all answers for this question
+    sqlx::query("DELETE FROM answers WHERE question_id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    // Delete the question itself
+    sqlx::query("DELETE FROM questions WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    // Invalidate questions cache
+    state.questions_cache.invalidate(&"active_questions".to_string()).await;
 
     Ok(Json(question))
 }

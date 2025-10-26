@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, sqlx::Type)]
 #[sqlx(type_name = "user_role", rename_all = "SCREAMING_SNAKE_CASE")]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub enum UserRole {
     Admin,
     Viewer,
@@ -28,41 +28,12 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateUser {
-    pub email: String,
-    pub password: String,
-    pub role: UserRole,
-}
-
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../web/src/types/")]
-pub struct UserResponse {
-    pub id: Uuid,
-    pub email: String,
-    pub role: UserRole,
-    pub is_active: bool,
-    pub created_at: DateTime<Utc>,
-}
-
-impl From<User> for UserResponse {
-    fn from(user: User) -> Self {
-        UserResponse {
-            id: user.id,
-            email: user.email,
-            role: user.role,
-            is_active: user.is_active,
-            created_at: user.created_at,
-        }
-    }
-}
-
 // ============================================
 // QUESTION MODELS
 // ============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, FromRow)]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct Question {
     pub id: Uuid,
     pub semantic_id: String,
@@ -74,7 +45,7 @@ pub struct Question {
 }
 
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct CreateQuestion {
     pub semantic_id: String,
     pub text: String,
@@ -82,7 +53,7 @@ pub struct CreateQuestion {
 }
 
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct UpdateQuestion {
     pub text: Option<String>,
     pub category: Option<String>,
@@ -94,7 +65,7 @@ pub struct UpdateQuestion {
 // ============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, FromRow)]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct Answer {
     pub id: Uuid,
     pub question_id: Uuid,
@@ -108,7 +79,7 @@ pub struct Answer {
 }
 
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct CreateAnswer {
     pub question_id: Uuid,
     pub label: String,
@@ -118,7 +89,7 @@ pub struct CreateAnswer {
 }
 
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct UpdateAnswer {
     pub label: Option<String>,
     pub next_question_id: Option<Uuid>,
@@ -128,94 +99,18 @@ pub struct UpdateAnswer {
 }
 
 // ============================================
-// SESSION MODELS
-// ============================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct Session {
-    pub id: Uuid,
-    pub session_id: String,
-    pub started_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub steps: serde_json::Value,
-    pub final_conclusion: Option<String>,
-    pub tech_identifier: Option<String>,
-    pub client_site: Option<String>,
-    pub user_agent: Option<String>,
-    pub ip_hash: Option<String>,
-    pub abandoned: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateSession {
-    pub tech_identifier: Option<String>,
-    pub client_site: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SessionStep {
-    pub question_id: Uuid,
-    pub answer_id: Uuid,
-    pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CompleteSession {
-    pub final_conclusion: String,
-}
-
-// ============================================
-// AUDIT LOG MODELS
-// ============================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct AuditLog {
-    pub id: Uuid,
-    pub user_id: Uuid,
-    pub action: String,
-    pub target_type: String,
-    pub target_id: Uuid,
-    pub before_state: Option<serde_json::Value>,
-    pub after_state: Option<serde_json::Value>,
-    pub ip_address: Option<String>,
-    pub user_agent: Option<String>,
-    pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateAuditLog {
-    pub user_id: Uuid,
-    pub action: String,
-    pub target_type: String,
-    pub target_id: Uuid,
-    pub before_state: Option<serde_json::Value>,
-    pub after_state: Option<serde_json::Value>,
-    pub ip_address: Option<String>,
-    pub user_agent: Option<String>,
-}
-
-// ============================================
 // QUERY RESPONSE MODELS
 // ============================================
 
 /// Response for question with its answers
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct QuestionWithAnswers {
     pub id: Uuid,
     pub semantic_id: String,
     pub text: String,
     pub category: Option<String>,
     pub answers: Vec<Answer>,
-}
-
-/// Response for decision tree navigation
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../web/src/types/")]
-pub struct NavigationResponse {
-    pub question: Question,
-    pub answers: Vec<Answer>,
-    pub session_id: String,
 }
 
 // ============================================
@@ -246,7 +141,7 @@ pub struct Node {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct CreateNode {
     pub category: String,
@@ -258,7 +153,7 @@ pub struct CreateNode {
     pub position_y: Option<f64>,
 }
 
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct UpdateNode {
     #[ts(optional)]
@@ -331,7 +226,7 @@ pub struct ConnectionWithTarget {
 }
 
 /// Complete graph for an issue category
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct IssueGraph {
     pub category: String,

@@ -1,6 +1,7 @@
 mod error;
 mod middleware;
 mod models;
+mod openapi;
 mod routes;
 mod utils;
 
@@ -15,7 +16,14 @@ use axum::{
 use error::{ApiError, ApiResult};
 use equipment_troubleshooting::AppState;
 use middleware::auth::auth_middleware;
+use middleware::performance::performance_monitoring_middleware;
+use middleware::rate_limit::{rate_limit_middleware, RateLimiter, RateLimiterExtension};
+use middleware::security::security_headers_middleware;
+use openapi::ApiDoc;
 use serde::Serialize;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+use std::sync::Arc;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -44,9 +52,7 @@ async fn spa_fallback_handler(uri: Uri) -> Response {
                 "application/javascript"
             } else if path.ends_with(".json") {
                 "application/json"
-            } else if path.ends_with(".png") {
-                return (StatusCode::OK, tokio::fs::read(&file_path).await.unwrap()).into_response();
-            } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+            } else if path.ends_with(".png") || path.ends_with(".jpg") || path.ends_with(".jpeg") {
                 return (StatusCode::OK, tokio::fs::read(&file_path).await.unwrap()).into_response();
             } else if path.ends_with(".svg") {
                 "image/svg+xml"
@@ -75,6 +81,16 @@ async fn main() {
     // Load environment variables
     dotenvy::dotenv().ok();
 
+    // Validate JWT_SECRET is set (critical security requirement)
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .expect("❌ CRITICAL: JWT_SECRET must be set in .env file for authentication to work");
+
+    if jwt_secret.len() < 32 {
+        panic!("❌ CRITICAL: JWT_SECRET must be at least 32 characters long for security");
+    }
+
+    tracing::info!("✅ JWT_SECRET validated ({} characters)", jwt_secret.len());
+
     // Get database URL
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set in .env file");
@@ -87,12 +103,15 @@ async fn main() {
         .statement_cache_capacity(0); // Disable prepared statements for Supabase pooler
 
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(20) // Increased from 5 to 20 for better concurrency
+        .min_connections(2)  // Maintain 2 connections ready
+        .acquire_timeout(std::time::Duration::from_secs(3)) // 3s timeout
+        .idle_timeout(Some(std::time::Duration::from_secs(600))) // 10 min idle timeout
         .connect_with(connect_options)
         .await
         .expect("Failed to create database pool");
 
-    tracing::info!("✅ Database connected successfully");
+    tracing::info!("✅ Database connected successfully (pool: 2-20 connections)");
 
     // Run migrations (commented out to avoid prepared statement conflicts with pooler)
     // Note: Migrations have already been applied to the database
@@ -103,8 +122,13 @@ async fn main() {
     //     .expect("Failed to run migrations");
     // tracing::info!("✅ Migrations completed successfully");
 
-    // Create app state
-    let state = AppState { db: pool };
+    // Create app state with caching layer
+    let state = AppState::new(pool);
+    tracing::info!("💾 Performance caching enabled (questions: 5min, trees/graphs: 10min)");
+
+    // Create rate limiter (100 requests per 60 seconds per IP)
+    let rate_limiter = Arc::new(RateLimiter::new(100, 60));
+    tracing::info!("🚦 Rate limiter initialized (100 requests/60 seconds)");
 
     // Build protected routes (require authentication)
     let protected_routes = Router::new()
@@ -123,6 +147,7 @@ async fn main() {
         .route("/api/admin/sessions", get(routes::admin::list_sessions))
         .route("/api/admin/stats", get(routes::admin::get_stats))
         .route("/api/admin/audit-logs", get(routes::admin::get_audit_logs))
+        .route("/api/admin/performance", get(routes::admin::get_performance_metrics))
         // Issues management routes
         .route("/api/admin/issues", get(routes::issues::list_issues))
         .route("/api/admin/issues", post(routes::issues::create_issue))
@@ -155,6 +180,8 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/api/health", get(health_check_db))
+        // OpenAPI/Swagger documentation
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         // Authentication routes (public)
         .route("/api/auth/login", post(routes::auth::login))
         .route("/api/auth/refresh", post(routes::auth::refresh))
@@ -176,6 +203,10 @@ async fn main() {
         .route("/api/demo/not-found", get(demo_not_found))
         .route("/api/demo/unauthorized", get(demo_unauthorized))
         .route("/api/demo/validation", get(demo_validation))
+        .layer(axum_middleware::from_fn(performance_monitoring_middleware))
+        .layer(axum_middleware::from_fn(security_headers_middleware))
+        .layer(axum_middleware::from_fn(rate_limit_middleware))
+        .layer(axum::Extension(RateLimiterExtension(rate_limiter)))
         .layer(CorsLayer::permissive())
         .with_state(state)
         // Serve static files for SPA (fallback to index.html for client-side routing)
@@ -194,7 +225,7 @@ async fn main() {
     // Parse the host and port into a SocketAddr
     let addr_str = format!("{}:{}", host, port);
     let addr = addr_str.parse::<SocketAddr>()
-        .expect(&format!("Invalid HOST:PORT combination: {}", addr_str));
+        .unwrap_or_else(|_| panic!("Invalid HOST:PORT combination: {}", addr_str));
 
     tracing::info!("🚀 Equipment Troubleshooting System");
 
@@ -240,7 +271,6 @@ async fn main() {
         .or_else(|| find_ssl_certs("../.."));
 
     let (cert_path, key_path) = ssl_certs
-        .map(|(cert, key)| (cert, key))
         .unwrap_or_else(|| (PathBuf::from("./server.crt"), PathBuf::from("./server.key")));
 
     if use_https {
@@ -257,6 +287,7 @@ async fn main() {
         tracing::info!("🔑 Using key: {}", key_path.display());
         tracing::info!("📡 Server listening on https://{}", addr);
         tracing::info!("🌐 Frontend & API available at https://{}", addr);
+        tracing::info!("📚 API Documentation (Swagger UI) available at https://{}/swagger-ui", addr);
 
         let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
             cert_path,
@@ -275,6 +306,7 @@ async fn main() {
         tracing::info!("💡 To enable HTTPS, change FRONTEND_URL to https:// and add SSL certificates");
         tracing::info!("📡 Server listening on http://{}", addr);
         tracing::info!("🌐 Frontend & API available at http://{}", addr);
+        tracing::info!("📚 API Documentation (Swagger UI) available at http://{}/swagger-ui", addr);
 
         let listener = tokio::net::TcpListener::bind(addr)
             .await

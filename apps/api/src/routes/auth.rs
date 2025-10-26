@@ -10,7 +10,7 @@ use ts_rs::TS;
 
 /// Login request payload
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
@@ -18,7 +18,7 @@ pub struct LoginRequest {
 
 /// Login response with JWT token and user info
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct LoginResponse {
     pub token: String,
     pub user: UserInfo,
@@ -26,7 +26,7 @@ pub struct LoginResponse {
 
 /// User information returned in login response
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct UserInfo {
     pub id: String,
     pub email: String,
@@ -94,7 +94,7 @@ pub async fn login(
 
 /// Refresh token request payload
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct RefreshRequest {
     pub token: String,
 }

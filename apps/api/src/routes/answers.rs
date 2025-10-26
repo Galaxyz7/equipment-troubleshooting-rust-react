@@ -89,7 +89,7 @@ pub async fn create_answer(
     // Validate that both next_question_id and conclusion_text are not set at the same time
     // Allow placeholder answers with neither (can be linked later)
     let has_next = req.next_question_id.is_some();
-    let has_conclusion = req.conclusion_text.as_ref().map_or(false, |s| !s.is_empty());
+    let has_conclusion = req.conclusion_text.as_ref().is_some_and(|s| !s.is_empty());
 
     if has_next && has_conclusion {
         return Err(ApiError::validation(vec![(
@@ -104,9 +104,9 @@ pub async fn create_answer(
          VALUES ($1, $2, $3, $4, $5, true)
          RETURNING id, question_id, label, next_question_id, conclusion_text, order_index, is_active, created_at, updated_at",
     )
-    .bind(&req.question_id)
+    .bind(req.question_id)
     .bind(&req.label)
-    .bind(&req.next_question_id)
+    .bind(req.next_question_id)
     .bind(&req.conclusion_text)
     .bind(req.order_index)
     .fetch_one(&state.db)
@@ -210,22 +210,27 @@ pub async fn update_answer(
 }
 
 /// DELETE /api/answers/:id
-/// Soft delete answer (ADMIN only - middleware handles auth)
+/// Hard delete answer (ADMIN only - middleware handles auth)
 pub async fn delete_answer(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Answer>> {
-    // Soft delete by setting is_active = false
+    // Fetch the answer first to return it after deletion
     let answer = sqlx::query_as::<_, Answer>(
-        "UPDATE answers
-         SET is_active = false, updated_at = NOW()
-         WHERE id = $1
-         RETURNING id, question_id, label, next_question_id, conclusion_text, order_index, is_active, created_at, updated_at",
+        "SELECT id, question_id, label, next_question_id, conclusion_text, order_index, is_active, created_at, updated_at
+         FROM answers
+         WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| ApiError::not_found("Answer not found"))?;
+
+    // Delete the answer
+    sqlx::query("DELETE FROM answers WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
 
     Ok(Json(answer))
 }

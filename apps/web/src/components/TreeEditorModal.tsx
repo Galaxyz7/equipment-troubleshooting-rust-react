@@ -51,12 +51,6 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
   // Get currently selected connection
   const selectedConnection = graphData?.connections.find(c => c.id === selectedConnectionId);
 
-  // Load graph data from API
-  useEffect(() => {
-    loadGraph();
-    loadIssueData();
-  }, [category]);
-
   // Initialize issue editing state when issue data changes
   useEffect(() => {
     if (issueData) {
@@ -89,64 +83,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
     }
   }, [selectedConnection]);
 
-  const loadGraph = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await issuesAPI.getGraph(category);
-      setGraphData(data);
-      convertGraphToFlow(data);
-    } catch (err: any) {
-      setError(`Failed to load graph: ${err.message}`);
-      console.error('Error loading graph:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadIssueData = async () => {
-    try {
-      const issues = await issuesAPI.list();
-      const issue = issues.find(i => i.category === category);
-      if (issue) {
-        setIssueData(issue);
-      }
-    } catch (err: any) {
-      console.error('Error loading issue data:', err);
-    }
-  };
-
-  const handleSaveIssue = async () => {
-    if (!hasUnsavedIssueChanges) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      const updateData: any = {};
-      if (editingIssueName !== (issueData?.name || issueName)) {
-        updateData.name = editingIssueName;
-      }
-      if (editingDisplayCategory !== (issueData?.display_category || '')) {
-        updateData.display_category = editingDisplayCategory || null;
-      }
-
-      if (Object.keys(updateData).length > 0) {
-        const updatedIssue = await issuesAPI.update(category, updateData);
-        setIssueData(updatedIssue);
-        setHasUnsavedIssueChanges(false);
-        alert('Issue metadata saved successfully!');
-      }
-    } catch (err: any) {
-      setError(`Failed to save issue metadata: ${err.message}`);
-      console.error('Error saving issue:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Convert API graph structure to React Flow nodes and edges
-  const convertGraphToFlow = (graph: IssueGraph) => {
+  const convertGraphToFlow = useCallback((graph: IssueGraph) => {
     const reactFlowNodes: FlowNode[] = [];
     const reactFlowEdges: Edge[] = [];
 
@@ -173,12 +110,9 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
         data: {
           label: (
             <div className="p-2">
-              <div className="font-semibold text-sm mb-1">
+              <div className="font-semibold text-sm">
                 {node.node_type === 'Conclusion' ? '🎯 ' : '❓ '}
-                {node.semantic_id || 'Node'}
-              </div>
-              <div className="text-xs text-gray-600">
-                {node.text.substring(0, 50)}{node.text.length > 50 ? '...' : ''}
+                {node.text.length > 60 ? node.text.substring(0, 60) + '...' : node.text}
               </div>
             </div>
           )
@@ -209,6 +143,82 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
 
     setFlowNodes(reactFlowNodes);
     setFlowEdges(reactFlowEdges);
+  }, [category, setFlowNodes, setFlowEdges]);
+
+  const loadGraph = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await issuesAPI.getGraph(category);
+      setGraphData(data);
+      convertGraphToFlow(data);
+    } catch (err: any) {
+      setError(`Failed to load graph: ${err.message}`);
+      console.error('Error loading graph:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [category, convertGraphToFlow]);
+
+  const loadIssueData = useCallback(async () => {
+    try {
+      const issues = await issuesAPI.list();
+      const issue = issues.find(i => i.category === category);
+      if (issue) {
+        setIssueData(issue);
+      }
+    } catch (err: any) {
+      console.error('Error loading issue data:', err);
+    }
+  }, [category]);
+
+  // Load graph data from API
+  useEffect(() => {
+    loadGraph();
+    loadIssueData();
+  }, [loadGraph, loadIssueData]);
+
+  // Warn user about unsaved changes when trying to close browser/tab
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasChanges || hasUnsavedNodeChanges || hasUnsavedIssueChanges) {
+        e.preventDefault();
+        // Modern browsers ignore custom messages and show a standard one
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasChanges, hasUnsavedNodeChanges, hasUnsavedIssueChanges]);
+
+  const handleSaveIssue = async () => {
+    if (!hasUnsavedIssueChanges) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const updateData: any = {};
+      if (editingIssueName !== (issueData?.name || issueName)) {
+        updateData.name = editingIssueName;
+      }
+      if (editingDisplayCategory !== (issueData?.display_category || '')) {
+        updateData.display_category = editingDisplayCategory || null;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        const updatedIssue = await issuesAPI.update(category, updateData);
+        setIssueData(updatedIssue);
+        setHasUnsavedIssueChanges(false);
+        alert('Issue metadata saved successfully!');
+      }
+    } catch (err: any) {
+      setError(`Failed to save issue metadata: ${err.message}`);
+      console.error('Error saving issue:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Track node position changes
@@ -249,7 +259,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
         console.error('Error creating connection:', err);
       }
     },
-    [graphData]
+    [graphData, loadGraph]
   );
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: FlowNode) => {
@@ -372,7 +382,12 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
     const text = prompt(`Enter ${nodeType} text:`);
     if (!text || text.trim() === '') return;
 
-    const semanticId = prompt('Enter semantic ID (optional):');
+    // Auto-generate semantic_id from text (hidden from user)
+    const semanticId = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, '_')
+      .substring(0, 50);
 
     try {
       await nodesAPI.create({
@@ -385,7 +400,7 @@ export default function TreeEditorModal({ category, issueName, onClose, onSave }
         position_y: null,
       });
       await loadGraph();
-      setHasChanges(false);
+      setHasChanges(true); // Mark as changed so save button appears
     } catch (err: any) {
       setError(`Failed to create node: ${err.message}`);
       console.error('Error creating node:', err);

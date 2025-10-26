@@ -8,7 +8,7 @@ use ts_rs::TS;
 
 /// API Error types with TypeScript export
 #[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 #[serde(tag = "type", content = "data")]
 pub enum ApiError {
     /// Resource not found (404)
@@ -37,7 +37,7 @@ pub enum ApiError {
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct ValidationField {
     pub field: String,
     pub message: String,
@@ -45,7 +45,7 @@ pub struct ValidationField {
 
 /// Standard error response format
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct ErrorResponse {
     pub error: ApiError,
     pub timestamp: String,

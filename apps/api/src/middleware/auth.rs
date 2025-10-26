@@ -63,32 +63,6 @@ pub async fn require_admin(
     Ok(next.run(request).await)
 }
 
-/// Middleware to require ADMIN or TECH role
-pub async fn require_admin_or_tech(
-    mut request: Request,
-    next: Next,
-) -> ApiResult<Response> {
-    let auth_header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| ApiError::unauthorized("Missing authorization header"))?;
-
-    let token = extract_token(auth_header)?;
-    let claims = verify_token(token)?;
-
-    // Check if user is ADMIN or TECH
-    if !matches!(claims.role, UserRole::Admin | UserRole::Tech) {
-        return Err(ApiError::forbidden(
-            "This action requires administrator or technician privileges",
-        ));
-    }
-
-    request.extensions_mut().insert(AuthUser(claims));
-
-    Ok(next.run(request).await)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

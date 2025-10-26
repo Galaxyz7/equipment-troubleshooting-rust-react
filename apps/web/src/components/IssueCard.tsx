@@ -54,7 +54,7 @@ export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete }:
             </span>
           </div>
           <p className="text-gray-500 text-[0.9em] mt-2">
-            {issue.question_count} question{issue.question_count !== 1 ? 's' : ''} in this decision tree
+            {Number(issue.question_count)} question{Number(issue.question_count) !== 1 ? 's' : ''} in this decision tree
           </p>
         </div>
 

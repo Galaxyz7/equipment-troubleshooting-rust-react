@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { troubleshootAPI } from '../lib/api';
 import type { Node, NavigationOption } from '../types';
@@ -40,12 +40,7 @@ export default function TroubleshootPage() {
     ? options
     : options.filter(opt => opt.display_category === categoryFilter);
 
-  // Start session on mount or when category changes
-  useEffect(() => {
-    startNewSession();
-  }, [category]);
-
-  const startNewSession = async () => {
+  const startNewSession = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -65,7 +60,12 @@ export default function TroubleshootPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [category]);
+
+  // Start session on mount or when category changes
+  useEffect(() => {
+    startNewSession();
+  }, [startNewSession]);
 
   const submitAnswer = async () => {
     if (!sessionId || !selectedOption) return;

@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 /// Request to start a new troubleshooting session
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct StartSessionRequest {
     pub tech_identifier: Option<String>,
     pub client_site: Option<String>,
@@ -21,7 +21,7 @@ pub struct StartSessionRequest {
 
 /// Response when starting a session (NODE-GRAPH VERSION)
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct StartSessionResponse {
     pub session_id: String,
     pub node: Node,
@@ -30,7 +30,7 @@ pub struct StartSessionResponse {
 
 /// Navigation option (connection to next node)
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct NavigationOption {
     pub connection_id: Uuid,
     pub label: String,
@@ -40,14 +40,14 @@ pub struct NavigationOption {
 
 /// Request to submit an answer (NODE-GRAPH VERSION)
 #[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct SubmitAnswerRequest {
     pub connection_id: Uuid,
 }
 
 /// Response after submitting an answer (NODE-GRAPH VERSION)
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct SubmitAnswerResponse {
     pub session_id: String,
     pub node: Node,
@@ -58,7 +58,7 @@ pub struct SubmitAnswerResponse {
 
 /// A step in the troubleshooting session history
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct HistoryStep {
     pub question: Question,
     pub answer: Answer,
@@ -66,7 +66,7 @@ pub struct HistoryStep {
 
 /// Response containing session history
 #[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct SessionHistoryResponse {
     pub session_id: String,
     pub started_at: String,
@@ -94,7 +94,7 @@ pub async fn start_session(
         .bind(&semantic_id)
         .fetch_optional(&state.db)
         .await?
-        .ok_or_else(|| ApiError::not_found(&format!("Issue category '{}' not found", category)))?
+        .ok_or_else(|| ApiError::not_found(format!("Issue category '{}' not found", category)))?
     } else {
         // No category specified: use global start node
         sqlx::query_as::<_, Node>(

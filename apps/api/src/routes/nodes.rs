@@ -94,8 +94,8 @@ pub async fn create_node(
     .bind(&req.text)
     .bind(&req.semantic_id)
     .bind(&req.display_category)
-    .bind(&req.position_x)
-    .bind(&req.position_y)
+    .bind(req.position_x)
+    .bind(req.position_y)
     .fetch_one(&state.db)
     .await?;
 
@@ -184,21 +184,44 @@ pub async fn update_node(
 }
 
 /// DELETE /api/nodes/:id
-/// Soft delete a node (ADMIN only)
+/// Hard delete a node and all its connections (ADMIN only)
 pub async fn delete_node(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Node>> {
+    // Fetch the node first to return it after deletion
     let node = sqlx::query_as::<_, Node>(
-        "UPDATE nodes
-         SET is_active = false, updated_at = NOW()
-         WHERE id = $1
-         RETURNING id, category, node_type, text, semantic_id, position_x, position_y, is_active, created_at, updated_at"
+        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
+         FROM nodes
+         WHERE id = $1"
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| ApiError::not_found("Node not found"))?;
+
+    // Delete all connections FROM this node
+    sqlx::query("DELETE FROM connections WHERE from_node_id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    // Delete all connections TO this node
+    sqlx::query("DELETE FROM connections WHERE to_node_id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    // Delete the node itself
+    sqlx::query("DELETE FROM nodes WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    // Invalidate cache for the category
+    let cache_key = format!("graph_{}", node.category);
+    state.issue_graph_cache.invalidate(&cache_key).await;
+    state.issue_tree_cache.invalidate(&node.category).await;
 
     Ok(Json(node))
 }

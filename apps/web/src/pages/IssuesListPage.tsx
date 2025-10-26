@@ -4,6 +4,7 @@ import { issuesAPI } from '../lib/api';
 import type { Issue } from '../types/issues';
 import IssueCard from '../components/IssueCard';
 import TreeEditorModal from '../components/TreeEditorModal';
+import CreateIssueModal from '../components/CreateIssueModal';
 
 export default function IssuesListPage() {
   const navigate = useNavigate();
@@ -11,6 +12,7 @@ export default function IssuesListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingIssue, setEditingIssue] = useState<Issue | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     loadIssues();
@@ -39,6 +41,7 @@ export default function IssuesListPage() {
   };
 
   const handleToggle = async (category: string, force = false) => {
+    setError(null);
     try {
       const updatedIssue = await issuesAPI.toggle(category, force);
       setIssues(issues.map(issue =>
@@ -57,7 +60,9 @@ export default function IssuesListPage() {
           await handleToggle(category, true);
         }
       } else {
-        alert('Failed to toggle issue status');
+        const errorMessage = err.response?.data?.error?.data?.message ||
+                            'Failed to toggle issue status. Please try again.';
+        setError(errorMessage);
         console.error('Error toggling issue:', err);
       }
     }
@@ -76,42 +81,24 @@ export default function IssuesListPage() {
   };
 
   const handleDelete = async (category: string) => {
+    setError(null);
     try {
       await issuesAPI.delete(category);
       setIssues(issues.filter(issue => issue.category !== category));
-    } catch (err) {
-      alert('Failed to delete issue');
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.error?.data?.message ||
+                          'Failed to delete issue. Please try again.';
+      setError(errorMessage);
       console.error('Error deleting issue:', err);
     }
   };
 
   const handleCreateNew = () => {
-    // TODO: Open modal to create new issue
-    const name = prompt('Enter issue name (e.g., "Brush Problems"):');
-    if (!name) return;
-
-    const displayCategory = prompt('Enter display category (e.g., "Electrical", "Mechanical", "General") - optional:');
-
-    const category = name.toLowerCase().replace(/\s+/g, '_');
-    const firstQuestion = prompt('Enter the first question for this issue:');
-    if (!firstQuestion) return;
-
-    createIssue(name, category, displayCategory || undefined, firstQuestion);
+    setShowCreateModal(true);
   };
 
-  const createIssue = async (name: string, category: string, displayCategory: string | undefined, firstQuestion: string) => {
-    try {
-      const newIssue = await issuesAPI.create({
-        name,
-        category,
-        display_category: displayCategory,
-        root_question_text: firstQuestion
-      });
-      setIssues([...issues, newIssue].sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (err: any) {
-      alert(`Failed to create issue: ${err.response?.data?.error?.data?.message || err.message}`);
-      console.error('Error creating issue:', err);
-    }
+  const handleIssueCreated = (newIssue: Issue) => {
+    setIssues([...issues, newIssue].sort((a, b) => a.name.localeCompare(b.name)));
   };
 
   const handleLogout = () => {
@@ -217,6 +204,13 @@ export default function IssuesListPage() {
           }}
         />
       )}
+
+      {/* Create Issue Modal */}
+      <CreateIssueModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onCreate={handleIssueCreated}
+      />
     </div>
   );
 }

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 /// JWT Claims structure
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../../apps/web/src/types/")]
+#[ts(export, export_to = "../../web/src/types/")]
 pub struct Claims {
     /// User ID
     pub sub: String, // subject (user id)
@@ -43,11 +43,6 @@ impl Claims {
     /// Check if token has expired
     pub fn is_expired(&self) -> bool {
         Utc::now().timestamp() > self.exp
-    }
-
-    /// Get user ID as UUID
-    pub fn user_id(&self) -> Result<Uuid, uuid::Error> {
-        Uuid::parse_str(&self.sub)
     }
 }
 
@@ -141,14 +136,5 @@ mod tests {
 
         let result = extract_token("Bearer ");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_user_id_parsing() {
-        let user_id = Uuid::new_v4();
-        let claims = Claims::new(user_id, "test@example.com".to_string(), UserRole::Viewer);
-
-        let parsed_id = claims.user_id().unwrap();
-        assert_eq!(parsed_id, user_id);
     }
 }
