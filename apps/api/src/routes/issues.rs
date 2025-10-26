@@ -328,76 +328,63 @@ pub async fn create_issue(
     State(state): State<AppState>,
     Json(req): Json<CreateIssueRequest>,
 ) -> ApiResult<Json<Issue>> {
+    // Start a transaction for atomicity and use a single optimized query
+    let mut tx = state.db.begin().await?;
+
     // Validate category is unique
-    let existing = sqlx::query!(
-        "SELECT COUNT(*) as count FROM nodes WHERE category = $1",
-        &req.category
+    let existing = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM nodes WHERE category = $1 LIMIT 1)"
     )
-    .fetch_one(&state.db)
+    .bind(&req.category)
+    .fetch_one(&mut *tx)
     .await?;
 
-    if existing.count.unwrap_or(0) > 0 {
+    if existing {
         return Err(ApiError::validation(vec![(
             "category".to_string(),
             "Category already exists".to_string(),
         )]));
     }
 
-    // Create root node for this issue category
+    // Create root node for this issue category and return it in one query
     let node_id = Uuid::new_v4();
     let semantic_id = format!("{}_start", req.category);
 
-    sqlx::query!(
-        "INSERT INTO nodes (id, category, node_type, text, semantic_id, display_category, is_active)
-         VALUES ($1, $2, 'question', $3, $4, $5, true)",
-        node_id,
-        &req.category,
-        &req.root_question_text,
-        &semantic_id,
-        req.display_category.as_deref()
-    )
-    .execute(&state.db)
-    .await?;
-
-    // Fetch the created node
     let node = sqlx::query_as::<_, Node>(
-        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
-         FROM nodes
-         WHERE id = $1",
+        "INSERT INTO nodes (id, category, node_type, text, semantic_id, display_category, is_active)
+         VALUES ($1, $2, 'question', $3, $4, $5, true)
+         RETURNING id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at"
     )
     .bind(node_id)
-    .fetch_one(&state.db)
+    .bind(&req.category)
+    .bind(&req.root_question_text)
+    .bind(&semantic_id)
+    .bind(req.display_category.as_deref())
+    .fetch_one(&mut *tx)
     .await?;
 
     // Automatically link this new issue to the root node (semantic_id='start')
-    // This makes the new issue appear on the first page
-    let root_node = sqlx::query!(
-        "SELECT id FROM nodes WHERE semantic_id = 'start'"
+    // Use a single query with a subquery for order_index
+    sqlx::query!(
+        r#"
+        INSERT INTO connections (from_node_id, to_node_id, label, order_index, is_active)
+        SELECT
+            n.id,
+            $1,
+            $2,
+            COALESCE((SELECT COUNT(*) FROM connections WHERE from_node_id = n.id), 0)::int,
+            true
+        FROM nodes n
+        WHERE n.semantic_id = 'start'
+        "#,
+        node_id,
+        &req.name
     )
-    .fetch_optional(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    if let Some(root) = root_node {
-        // Get the count of existing connections for order_index
-        let connection_count = sqlx::query!(
-            "SELECT COUNT(*) as count FROM connections WHERE from_node_id = $1",
-            root.id
-        )
-        .fetch_one(&state.db)
-        .await?;
-
-        // Create a connection from the root node to this new issue node
-        sqlx::query!(
-            "INSERT INTO connections (from_node_id, to_node_id, label, order_index, is_active)
-             VALUES ($1, $2, $3, $4, true)",
-            root.id,
-            node_id,
-            &req.name,  // Use the issue name as the connection label
-            connection_count.count.unwrap_or(0) as i32
-        )
-        .execute(&state.db)
-        .await?;
-    }
+    // Commit transaction
+    tx.commit().await?;
 
     Ok(Json(Issue {
         id: node.id.to_string(),

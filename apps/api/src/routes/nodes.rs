@@ -99,6 +99,11 @@ pub async fn create_node(
     .fetch_one(&state.db)
     .await?;
 
+    // Invalidate cache for the category
+    let cache_key = format!("graph_{}", node.category);
+    state.issue_graph_cache.invalidate(&cache_key).await;
+    state.issue_tree_cache.invalidate(&node.category).await;
+
     Ok(Json(node))
 }
 
@@ -179,6 +184,11 @@ pub async fn update_node(
     }
 
     let node = query_builder.fetch_one(&state.db).await?;
+
+    // Invalidate cache for the category
+    let cache_key = format!("graph_{}", node.category);
+    state.issue_graph_cache.invalidate(&cache_key).await;
+    state.issue_tree_cache.invalidate(&node.category).await;
 
     Ok(Json(node))
 }

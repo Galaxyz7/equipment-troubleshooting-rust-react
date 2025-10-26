@@ -99,6 +99,22 @@ pub async fn create_connection(
     .fetch_one(&state.db)
     .await?;
 
+    // Get the from_node category for cache invalidation
+    let category = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT category FROM nodes WHERE id = $1"
+    )
+    .bind(connection.from_node_id)
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    // Invalidate cache for the category
+    if let Some(category) = category {
+        let cache_key = format!("graph_{}", category);
+        state.issue_graph_cache.invalidate(&cache_key).await;
+        state.issue_tree_cache.invalidate(&category).await;
+    }
+
     Ok(Json(connection))
 }
 
@@ -177,6 +193,22 @@ pub async fn update_connection(
     }
 
     let connection = query_builder.fetch_one(&state.db).await?;
+
+    // Get the from_node category for cache invalidation
+    let category = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT category FROM nodes WHERE id = $1"
+    )
+    .bind(connection.from_node_id)
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    // Invalidate cache for the category
+    if let Some(category) = category {
+        let cache_key = format!("graph_{}", category);
+        state.issue_graph_cache.invalidate(&cache_key).await;
+        state.issue_tree_cache.invalidate(&category).await;
+    }
 
     Ok(Json(connection))
 }

@@ -3,6 +3,7 @@ use crate::AppState;
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use ts_rs::TS;
 
 /// Session summary for admin list view
@@ -43,7 +44,7 @@ pub struct DashboardStats {
 }
 
 /// Statistics for a specific conclusion
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct ConclusionStats {
     pub conclusion: String,
@@ -51,7 +52,7 @@ pub struct ConclusionStats {
 }
 
 /// Statistics by category
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct CategoryStats {
     pub category: String,
@@ -229,135 +230,100 @@ pub async fn list_sessions(
 }
 
 /// GET /api/admin/stats
-/// Get dashboard statistics (ADMIN only)
+/// Get dashboard statistics (ADMIN only) - OPTIMIZED to single query with CTEs
 pub async fn get_stats(
     State(state): State<AppState>,
     Query(params): Query<StatsQueryParams>,
 ) -> ApiResult<Json<DashboardStats>> {
-    // Build date filter if provided
-    let date_filter = if params.start_date.is_some() || params.end_date.is_some() {
-        let mut conditions = vec![];
-        if let Some(start) = &params.start_date {
-            conditions.push(format!("started_at >= '{}'", start));
-        }
-        if let Some(end) = &params.end_date {
-            conditions.push(format!("started_at <= '{}'", end));
-        }
-        format!("WHERE {}", conditions.join(" AND "))
-    } else {
+    // Build date filter conditions
+    let mut date_conditions = vec![];
+    if let Some(start) = &params.start_date {
+        date_conditions.push(format!("started_at >= '{}'", start));
+    }
+    if let Some(end) = &params.end_date {
+        date_conditions.push(format!("started_at <= '{}'", end));
+    }
+    let date_filter = if date_conditions.is_empty() {
         String::new()
+    } else {
+        format!("WHERE {}", date_conditions.join(" AND "))
     };
 
-    // Total sessions
-    let total_sessions = sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM sessions {}",
-        date_filter
-    ))
-    .fetch_one(&state.db)
-    .await?;
-
-    // Build WHERE clause for queries with additional conditions
-    let completed_where = if date_filter.is_empty() {
-        "WHERE completed_at IS NOT NULL".to_string()
-    } else {
-        format!("{} AND completed_at IS NOT NULL", date_filter)
-    };
-
-    let abandoned_where = if date_filter.is_empty() {
-        "WHERE abandoned = true".to_string()
-    } else {
-        format!("{} AND abandoned = true", date_filter)
-    };
-
-    let active_where = if date_filter.is_empty() {
-        "WHERE completed_at IS NULL AND abandoned = false".to_string()
-    } else {
-        format!(
-            "{} AND completed_at IS NULL AND abandoned = false",
-            date_filter
+    // Single optimized query using CTEs to compute all stats in one database roundtrip
+    let query = format!(
+        r#"
+        WITH filtered_sessions AS (
+            SELECT
+                session_id,
+                completed_at,
+                abandoned,
+                final_conclusion,
+                steps
+            FROM sessions
+            {}
+        ),
+        basic_stats AS (
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE completed_at IS NOT NULL) as completed,
+                COUNT(*) FILTER (WHERE abandoned = true) as abandoned,
+                COUNT(*) FILTER (WHERE completed_at IS NULL AND abandoned = false) as active,
+                AVG(jsonb_array_length(steps)) FILTER (WHERE completed_at IS NOT NULL) as avg_steps
+            FROM filtered_sessions
+        ),
+        conclusion_stats AS (
+            SELECT final_conclusion, COUNT(*) as count
+            FROM filtered_sessions
+            WHERE final_conclusion IS NOT NULL
+            GROUP BY final_conclusion
+            ORDER BY count DESC
+            LIMIT 10
+        ),
+        category_stats AS (
+            SELECT
+                COALESCE((steps->0->>'category')::text, 'unknown') as category,
+                COUNT(*) as count
+            FROM filtered_sessions
+            GROUP BY category
+            ORDER BY count DESC
         )
-    };
-
-    let conclusions_where = if date_filter.is_empty() {
-        "WHERE final_conclusion IS NOT NULL".to_string()
-    } else {
-        format!("{} AND final_conclusion IS NOT NULL", date_filter)
-    };
-
-    // Completed sessions
-    let completed_sessions = sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM sessions {}",
-        completed_where
-    ))
-    .fetch_one(&state.db)
-    .await?;
-
-    // Abandoned sessions
-    let abandoned_sessions = sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM sessions {}",
-        abandoned_where
-    ))
-    .fetch_one(&state.db)
-    .await?;
-
-    // Active sessions (started but not completed and not abandoned)
-    let active_sessions = sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM sessions {}",
-        active_where
-    ))
-    .fetch_one(&state.db)
-    .await?;
-
-    // Average steps to completion
-    let avg_steps: Option<f64> = sqlx::query_scalar(&format!(
-        r#"
-        SELECT CAST(AVG(jsonb_array_length(steps)) AS DOUBLE PRECISION)
-        FROM sessions
-        {}
-        "#,
-        completed_where
-    ))
-    .fetch_one(&state.db)
-    .await?;
-
-    let avg_steps_to_completion = avg_steps.unwrap_or(0.0);
-
-    // Most common conclusions (top 10)
-    let most_common_conclusions = sqlx::query_as::<_, (String, i64)>(&format!(
-        r#"
-        SELECT final_conclusion, COUNT(*) as count
-        FROM sessions
-        {}
-        GROUP BY final_conclusion
-        ORDER BY COUNT(*) DESC
-        LIMIT 10
-        "#,
-        conclusions_where
-    ))
-    .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .map(|(conclusion, count)| ConclusionStats { conclusion, count })
-    .collect();
-
-    // Sessions by category - extract from first step in steps JSONB array
-    let sessions_by_category = sqlx::query_as::<_, (String, i64)>(&format!(
-        r#"
         SELECT
-            COALESCE((steps->0->>'category')::text, 'unknown') as category,
-            COUNT(*) as count
-        FROM sessions
-        {}
-        GROUP BY category
-        ORDER BY count DESC
+            (SELECT total FROM basic_stats) as total_sessions,
+            (SELECT completed FROM basic_stats) as completed_sessions,
+            (SELECT abandoned FROM basic_stats) as abandoned_sessions,
+            (SELECT active FROM basic_stats) as active_sessions,
+            COALESCE((SELECT avg_steps FROM basic_stats), 0.0) as avg_steps_to_completion,
+            COALESCE(
+                (SELECT json_agg(json_build_object('conclusion', final_conclusion, 'count', count))
+                 FROM conclusion_stats),
+                '[]'::json
+            ) as conclusions,
+            COALESCE(
+                (SELECT json_agg(json_build_object('category', category, 'count', count))
+                 FROM category_stats),
+                '[]'::json
+            ) as categories
         "#,
         date_filter
-    ))
-    .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .map(|(category, count)| CategoryStats { category, count })
-    .collect();
+    );
+
+    let row = sqlx::query(&query)
+        .fetch_one(&state.db)
+        .await?;
+
+    let total_sessions: i64 = row.try_get("total_sessions")?;
+    let completed_sessions: i64 = row.try_get("completed_sessions")?;
+    let abandoned_sessions: i64 = row.try_get("abandoned_sessions")?;
+    let active_sessions: i64 = row.try_get("active_sessions")?;
+    let avg_steps_to_completion: f64 = row.try_get("avg_steps_to_completion")?;
+
+    let conclusions_json: serde_json::Value = row.try_get("conclusions")?;
+    let most_common_conclusions: Vec<ConclusionStats> = serde_json::from_value(conclusions_json)
+        .unwrap_or_default();
+
+    let categories_json: serde_json::Value = row.try_get("categories")?;
+    let sessions_by_category: Vec<CategoryStats> = serde_json::from_value(categories_json)
+        .unwrap_or_default();
 
     Ok(Json(DashboardStats {
         total_sessions,
