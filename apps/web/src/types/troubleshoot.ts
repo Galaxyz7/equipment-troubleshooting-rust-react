@@ -14,3 +14,6 @@ export * from './CategoryStats';
 export * from './AuditLogsResponse';
 export * from './AuditLogEntry';
 export * from './DeleteSessionsResponse';
+export * from './CategoryListResponse';
+export * from './RenameCategoryRequest';
+export * from './CategoryUpdateResponse';

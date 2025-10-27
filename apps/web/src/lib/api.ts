@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { LoginRequest, LoginResponse } from '../types';
+import type { LoginRequest, LoginResponse, UserInfo } from '../types';
 import type {
   StartSessionRequest,
   StartSessionResponse,
@@ -10,6 +10,9 @@ import type {
   DashboardStats,
   AuditLogsResponse,
   DeleteSessionsResponse,
+  CategoryListResponse,
+  RenameCategoryRequest,
+  CategoryUpdateResponse,
 } from '../types/troubleshoot';
 import type {
   Issue,
@@ -84,8 +87,8 @@ export const authAPI = {
     return data;
   },
 
-  getMe: async () => {
-    const { data } = await api.get('/api/v1/auth/me');
+  getMe: async (): Promise<UserInfo> => {
+    const { data } = await api.get<UserInfo>('/api/v1/auth/me');
     return data;
   },
 };
@@ -141,18 +144,19 @@ export const adminAPI = {
     return data;
   },
 
-  getCategories: async (): Promise<{ categories: string[] }> => {
-    const { data } = await api.get<{ categories: string[] }>('/api/v1/admin/categories');
+  getCategories: async (): Promise<CategoryListResponse> => {
+    const { data } = await api.get<CategoryListResponse>('/api/v1/admin/categories');
     return data;
   },
 
-  renameCategory: async (oldName: string, newName: string): Promise<{ updated_count: number }> => {
-    const { data } = await api.put<{ updated_count: number }>(`/api/v1/admin/categories/${encodeURIComponent(oldName)}`, { new_name: newName });
+  renameCategory: async (oldName: string, newName: string): Promise<CategoryUpdateResponse> => {
+    const request: RenameCategoryRequest = { new_name: newName };
+    const { data } = await api.put<CategoryUpdateResponse>(`/api/v1/admin/categories/${encodeURIComponent(oldName)}`, request);
     return data;
   },
 
-  deleteCategory: async (name: string): Promise<{ updated_count: number }> => {
-    const { data } = await api.delete<{ updated_count: number }>(`/api/v1/admin/categories/${encodeURIComponent(name)}`);
+  deleteCategory: async (name: string): Promise<CategoryUpdateResponse> => {
+    const { data } = await api.delete<CategoryUpdateResponse>(`/api/v1/admin/categories/${encodeURIComponent(name)}`);
     return data;
   },
 };
