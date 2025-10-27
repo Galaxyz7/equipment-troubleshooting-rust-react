@@ -97,12 +97,6 @@ impl ApiError {
         }
     }
 
-    pub fn conflict(message: impl Into<String>) -> Self {
-        ApiError::Conflict {
-            message: message.into(),
-        }
-    }
-
     /// Get HTTP status code for this error
     pub fn status_code(&self) -> StatusCode {
         match self {

@@ -10,7 +10,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json', 'html', 'lcov'],
       exclude: [
         'node_modules/',
         'src/test/',
@@ -18,7 +18,14 @@ export default defineConfig({
         '**/*.config.*',
         '**/mockData',
         'src/types/',
+        'dist/',
       ],
+      thresholds: {
+        lines: 70,
+        functions: 70,
+        branches: 70,
+        statements: 70,
+      },
     },
   },
   resolve: {

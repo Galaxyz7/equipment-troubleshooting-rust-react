@@ -59,10 +59,10 @@ export default function ConclusionPage() {
               {history.map((step: HistoryStep, index: number) => (
                 <div key={index} className="py-3 border-b border-gray-200 last:border-b-0">
                   <div className="text-gray-600 text-[0.95em] mb-1">
-                    {step.question.text}
+                    {step.node.text}
                   </div>
                   <div className="text-[#667eea] font-semibold">
-                    → {step.answer.label}
+                    → {step.connection.label}
                   </div>
                 </div>
               ))}

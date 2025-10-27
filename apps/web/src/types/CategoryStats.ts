@@ -3,4 +3,4 @@
 /**
  * Statistics by category
  */
-export type CategoryStats = { category: string, count: bigint, };
+export type CategoryStats = { category: string, count: number, };

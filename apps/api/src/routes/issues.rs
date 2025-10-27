@@ -1,11 +1,15 @@
 use crate::error::{ApiError, ApiResult};
-use crate::models::{Answer, Question, Node, Connection, IssueGraph, NodeType};
+use crate::middleware::auth::AuthUser;
+use crate::models::{Node, Connection, IssueGraph, NodeType};
+use crate::utils::audit;
 use crate::AppState;
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    http::HeaderMap,
+    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -52,43 +56,6 @@ pub struct UpdateIssueRequest {
 pub struct ToggleIssueQuery {
     #[serde(default)]
     pub force: bool,
-}
-
-/// Tree node representing a question and its branches
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct TreeNode {
-    pub question: Question,
-    pub answers: Vec<TreeAnswer>,
-}
-
-/// Answer with its destination information
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct TreeAnswer {
-    pub id: String,
-    pub label: String,
-    pub order_index: i32,
-    pub destination: AnswerDestination,
-}
-
-/// Where an answer leads to
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct AnswerDestination {
-    #[serde(rename = "type")]
-    pub destination_type: String, // "question" or "conclusion"
-    pub question_id: Option<String>,
-    pub question_text: Option<String>,
-    pub conclusion_text: Option<String>,
-}
-
-/// Complete tree structure for an issue
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct IssueTree {
-    pub issue: Issue,
-    pub nodes: Vec<TreeNode>,
 }
 
 // ============================================
@@ -211,137 +178,6 @@ pub async fn list_issues(State(state): State<AppState>) -> ApiResult<Json<Vec<Is
     Ok(Json(issue_list))
 }
 
-/// GET /api/admin/issues/:category/tree
-/// Get complete decision tree for an issue - Cached for 10 minutes, optimized queries
-pub async fn get_issue_tree(
-    State(state): State<AppState>,
-    Path(category): Path<String>,
-) -> ApiResult<Json<IssueTree>> {
-    // Try to get from cache first
-    if let Some(cached) = state.issue_tree_cache.get(&category).await {
-        tracing::debug!("✅ Cache HIT: issue tree for {}", category);
-        return Ok(Json(serde_json::from_value(cached)?));
-    }
-
-    tracing::debug!("❌ Cache MISS: issue tree for {} - fetching from DB", category);
-
-    // Get all questions in this category
-    let questions = sqlx::query_as::<_, Question>(
-        "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
-         FROM questions
-         WHERE category = $1
-         ORDER BY created_at ASC",
-    )
-    .bind(&category)
-    .fetch_all(&state.db)
-    .await?;
-
-    if questions.is_empty() {
-        return Err(ApiError::not_found("Issue not found"));
-    }
-
-    // Get issue metadata from first question
-    let first_question = &questions[0];
-    let issue = Issue {
-        id: first_question.id.to_string(),
-        name: category.clone(),
-        category: category.clone(),
-        display_category: None,
-        root_question_id: first_question.id.to_string(),
-        is_active: first_question.is_active,
-        question_count: questions.len() as i64,
-        created_at: first_question.created_at.to_rfc3339(),
-        updated_at: first_question.updated_at.to_rfc3339(),
-    };
-
-    // OPTIMIZATION: Fetch ALL answers for this category in one query instead of N queries
-    let question_ids: Vec<Uuid> = questions.iter().map(|q| q.id).collect();
-    let all_answers = sqlx::query_as::<_, Answer>(
-        "SELECT id, question_id, label, next_question_id, conclusion_text, order_index, is_active, created_at, updated_at
-         FROM answers
-         WHERE question_id = ANY($1)
-         ORDER BY question_id, order_index ASC",
-    )
-    .bind(&question_ids)
-    .fetch_all(&state.db)
-    .await?;
-
-    // OPTIMIZATION: Fetch ALL referenced questions in one query instead of N queries
-    let next_question_ids: Vec<Uuid> = all_answers
-        .iter()
-        .filter_map(|a| a.next_question_id)
-        .collect();
-
-    let next_questions = if !next_question_ids.is_empty() {
-        sqlx::query_as::<_, Question>(
-            "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
-             FROM questions
-             WHERE id = ANY($1)",
-        )
-        .bind(&next_question_ids)
-        .fetch_all(&state.db)
-        .await?
-    } else {
-        vec![]
-    };
-
-    // Create lookup map for quick access
-    let question_map: std::collections::HashMap<Uuid, &Question> =
-        next_questions.iter().map(|q| (q.id, q)).collect();
-
-    // Build tree nodes
-    let mut nodes = Vec::new();
-    let mut answer_index = 0;
-
-    for question in questions {
-        let mut tree_answers = Vec::new();
-
-        // Get answers for this question from the fetched batch
-        while answer_index < all_answers.len()
-            && all_answers[answer_index].question_id == question.id
-        {
-            let answer = &all_answers[answer_index];
-
-            let destination = if let Some(next_q_id) = answer.next_question_id {
-                AnswerDestination {
-                    destination_type: "question".to_string(),
-                    question_id: Some(next_q_id.to_string()),
-                    question_text: question_map.get(&next_q_id).map(|q| q.text.clone()),
-                    conclusion_text: None,
-                }
-            } else {
-                AnswerDestination {
-                    destination_type: "conclusion".to_string(),
-                    question_id: None,
-                    question_text: None,
-                    conclusion_text: answer.conclusion_text.clone(),
-                }
-            };
-
-            tree_answers.push(TreeAnswer {
-                id: answer.id.to_string(),
-                label: answer.label.clone(),
-                order_index: answer.order_index,
-                destination,
-            });
-
-            answer_index += 1;
-        }
-
-        nodes.push(TreeNode {
-            question,
-            answers: tree_answers,
-        });
-    }
-
-    let result = IssueTree { issue, nodes };
-
-    // Store in cache
-    state.issue_tree_cache.set(category.clone(), serde_json::to_value(&result)?).await;
-
-    Ok(Json(result))
-}
-
 /// GET /api/admin/issues/:category/graph
 /// Get complete node graph for an issue category - Cached for 10 minutes
 pub async fn get_issue_graph(
@@ -402,6 +238,8 @@ pub async fn get_issue_graph(
 /// Create a new issue with root node (NODE-GRAPH VERSION)
 pub async fn create_issue(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Json(req): Json<CreateIssueRequest>,
 ) -> ApiResult<Json<Issue>> {
     // Start a transaction for atomicity and use a single optimized query
@@ -462,6 +300,26 @@ pub async fn create_issue(
     // Commit transaction
     tx.commit().await?;
 
+    // Audit log the issue creation
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::IssueCreated,
+        "issue",
+        Some(&req.category),
+        Some(json!({
+            "name": &req.name,
+            "display_category": &node.display_category,
+            "root_question_text": &req.root_question_text,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
+
     Ok(Json(Issue {
         id: node.id.to_string(),
         name: req.name,
@@ -479,6 +337,8 @@ pub async fn create_issue(
 /// Update issue metadata (NODE-GRAPH VERSION)
 pub async fn update_issue(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(category): Path<String>,
     Json(req): Json<UpdateIssueRequest>,
 ) -> ApiResult<Json<Issue>> {
@@ -562,6 +422,26 @@ pub async fn update_issue(
     .fetch_one(&state.db)
     .await?;
 
+    // Audit log the issue update
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::IssueUpdated,
+        "issue",
+        Some(&category),
+        Some(json!({
+            "name": req.name,
+            "display_category": req.display_category,
+            "is_active": req.is_active,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
+
     Ok(Json(Issue {
         id: node.id.to_string(),
         name: updated_name,
@@ -579,6 +459,8 @@ pub async fn update_issue(
 /// Toggle issue active status (NODE-GRAPH VERSION)
 pub async fn toggle_issue(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(category): Path<String>,
     Query(query): Query<ToggleIssueQuery>,
 ) -> ApiResult<Json<Issue>> {
@@ -663,6 +545,25 @@ pub async fn toggle_issue(
     .fetch_one(&state.db)
     .await?;
 
+    // Audit log the issue toggle
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::IssueToggled,
+        "issue",
+        Some(&category),
+        Some(json!({
+            "new_status": new_status,
+            "forced": query.force,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
+
     Ok(Json(Issue {
         id: node.id.to_string(),
         name: category.clone(),
@@ -687,6 +588,8 @@ pub struct DeleteIssueParams {
 /// Delete entire issue and all its nodes/connections (NODE-GRAPH VERSION)
 pub async fn delete_issue(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(category): Path<String>,
     Query(params): Query<DeleteIssueParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -737,6 +640,26 @@ pub async fn delete_issue(
     } else {
         0
     };
+
+    // Audit log the issue deletion
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::IssueDeleted,
+        "issue",
+        Some(&category),
+        Some(json!({
+            "nodes_deleted": nodes_deleted,
+            "sessions_deleted": sessions_deleted,
+            "delete_sessions": params.delete_sessions,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -984,7 +907,7 @@ pub async fn import_issues(
         for conn_data in &issue_data.connections {
             // Validate indices
             if conn_data.from_node_index >= node_ids.len() || conn_data.to_node_index >= node_ids.len() {
-                conn_error_msg = Some(format!("Invalid connection: node index out of bounds"));
+                conn_error_msg = Some("Invalid connection: node index out of bounds".to_string());
                 break;
             }
 

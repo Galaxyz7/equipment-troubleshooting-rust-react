@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import type { Issue } from '../types/issues';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 interface DeleteIssueModalProps {
   issue: Issue | null;
@@ -8,7 +10,7 @@ interface DeleteIssueModalProps {
   onConfirm: (category: string, deleteSessions: boolean) => Promise<void>;
 }
 
-export default function DeleteIssueModal({ issue, isOpen, onClose, onConfirm }: DeleteIssueModalProps) {
+const DeleteIssueModal = memo(function DeleteIssueModal({ issue, isOpen, onClose, onConfirm }: DeleteIssueModalProps) {
   const [deleteSessions, setDeleteSessions] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -21,7 +23,11 @@ export default function DeleteIssueModal({ issue, isOpen, onClose, onConfirm }: 
       setDeleteSessions(false);
       onClose();
     } catch (error) {
-      console.error('Error deleting issue:', error);
+      logger.error('Failed to delete issue', {
+        category: issue.category,
+        deleteSessions,
+        error: getErrorMessage(error)
+      });
     } finally {
       setDeleting(false);
     }
@@ -36,16 +42,22 @@ export default function DeleteIssueModal({ issue, isOpen, onClose, onConfirm }: 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+      <div
+        className="bg-white rounded-xl shadow-2xl max-w-md w-full"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-modal-title"
+      >
         {/* Header */}
         <div className="bg-red-600 px-6 py-4 flex items-center justify-between rounded-t-xl">
           <div className="flex items-center">
-            <span className="text-2xl mr-3">⚠️</span>
-            <h2 className="text-xl font-bold text-white">Delete Issue</h2>
+            <span className="text-2xl mr-3" aria-hidden="true">⚠️</span>
+            <h2 id="delete-modal-title" className="text-xl font-bold text-white">Delete Issue</h2>
           </div>
           <button
             onClick={handleClose}
             className="text-white hover:text-red-100 text-2xl leading-none"
+            aria-label="Close delete confirmation dialog"
           >
             ×
           </button>
@@ -107,4 +119,6 @@ export default function DeleteIssueModal({ issue, isOpen, onClose, onConfirm }: 
       </div>
     </div>
   );
-}
+});
+
+export default DeleteIssueModal;

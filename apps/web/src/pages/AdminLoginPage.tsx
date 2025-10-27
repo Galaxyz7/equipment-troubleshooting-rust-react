@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../lib/api';
+import { getErrorMessage } from '../lib/errorUtils';
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
@@ -41,8 +42,8 @@ export default function AdminLoginPage() {
       localStorage.setItem('token', response.token);
       localStorage.setItem('user', JSON.stringify(response.user));
       navigate('/admin');
-    } catch (err: any) {
-      setError(err.response?.data?.error?.data?.message || 'Invalid email or password');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Invalid email or password');
     } finally {
       setLoading(false);
     }

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { issuesAPI } from '../lib/api';
 import type { Issue } from '../types/issues';
 import CategoryCombobox from './CategoryCombobox';
+import { getErrorMessage } from '../lib/errorUtils';
 
 interface CreateIssueModalProps {
   isOpen: boolean;
@@ -9,7 +10,7 @@ interface CreateIssueModalProps {
   onCreate: (issue: Issue) => void;
 }
 
-export default function CreateIssueModal({ isOpen, onClose, onCreate }: CreateIssueModalProps) {
+const CreateIssueModal = memo(function CreateIssueModal({ isOpen, onClose, onCreate }: CreateIssueModalProps) {
   const [name, setName] = useState('');
   const [displayCategory, setDisplayCategory] = useState('');
   const [firstQuestion, setFirstQuestion] = useState('');
@@ -60,12 +61,9 @@ export default function CreateIssueModal({ isOpen, onClose, onCreate }: CreateIs
       onCreate(newIssue);
       resetForm();
       onClose();
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.error?.data?.message ||
-                          err.response?.data?.message ||
-                          'Failed to create issue';
+    } catch (err: unknown) {
       setErrors({
-        submit: errorMessage,
+        submit: getErrorMessage(err) || 'Failed to create issue',
       });
     } finally {
       setLoading(false);
@@ -209,4 +207,6 @@ export default function CreateIssueModal({ isOpen, onClose, onCreate }: CreateIs
       </div>
     </div>
   );
-}
+});
+
+export default CreateIssueModal;

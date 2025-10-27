@@ -26,13 +26,13 @@ import { useLocation } from 'react-router-dom';
 
 const mockHistory: HistoryStep[] = [
   {
-    question: { text: 'Is the device powered on?' },
-    answer: { label: 'No' },
-  } as HistoryStep,
+    node: { id: '1', text: 'Is the device powered on?', category: 'test', node_type: 'Question', semantic_id: null, display_category: null, position_x: null, position_y: null, is_active: true, created_at: '2024-01-01', updated_at: '2024-01-01' },
+    connection: { id: '1', from_node_id: '1', to_node_id: '2', label: 'No', order_index: 0, is_active: true, created_at: '2024-01-01', updated_at: '2024-01-01' },
+  },
   {
-    question: { text: 'Is the power cable connected?' },
-    answer: { label: 'Yes' },
-  } as HistoryStep,
+    node: { id: '2', text: 'Is the power cable connected?', category: 'test', node_type: 'Question', semantic_id: null, display_category: null, position_x: null, position_y: null, is_active: true, created_at: '2024-01-01', updated_at: '2024-01-01' },
+    connection: { id: '2', from_node_id: '2', to_node_id: '3', label: 'Yes', order_index: 0, is_active: true, created_at: '2024-01-01', updated_at: '2024-01-01' },
+  },
 ];
 
 describe('ConclusionPage', () => {

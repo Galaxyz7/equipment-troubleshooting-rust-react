@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { troubleshootAPI } from '../lib/api';
 import type { Node, NavigationOption } from '../types';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 interface HistoryStep {
   nodeText: string;
@@ -56,7 +58,7 @@ export default function TroubleshootPage() {
       setSelectedOption('');
     } catch (err) {
       setError('Failed to start session. Please try again.');
-      console.error('Error starting session:', err);
+      logger.error('Failed to start troubleshooting session', { category, error: getErrorMessage(err) });
     } finally {
       setLoading(false);
     }
@@ -96,7 +98,11 @@ export default function TroubleshootPage() {
       setSelectedOption('');
     } catch (err) {
       setError('Failed to submit answer. Please try again.');
-      console.error('Error submitting answer:', err);
+      logger.error('Failed to submit answer', {
+        sessionId,
+        connectionId: selectedOption,
+        error: getErrorMessage(err)
+      });
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { adminAPI, issuesAPI } from '../lib/api';
 import type { Issue } from '../types/issues';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 interface DataManagementModalProps {
   isOpen: boolean;
@@ -8,7 +10,7 @@ interface DataManagementModalProps {
   onSuccess: () => void;
 }
 
-export default function DataManagementModal({ isOpen, onClose, onSuccess }: DataManagementModalProps) {
+const DataManagementModal = memo(function DataManagementModal({ isOpen, onClose, onSuccess }: DataManagementModalProps) {
   const [timeRange, setTimeRange] = useState<string>('all_time');
   const [category, setCategory] = useState<string>('all');
   const [status, setStatus] = useState<string>('all');
@@ -18,6 +20,38 @@ export default function DataManagementModal({ isOpen, onClose, onSuccess }: Data
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loadingPreview, setLoadingPreview] = useState(false);
+
+  const loadIssues = async () => {
+    try {
+      const data = await issuesAPI.list();
+      setIssues(data);
+    } catch (err) {
+      logger.error('Failed to load issues for data management modal', { error: getErrorMessage(err) });
+    }
+  };
+
+  const loadPreviewCount = useCallback(async () => {
+    setLoadingPreview(true);
+    try {
+      const params = new URLSearchParams();
+      if (timeRange !== 'all_time') params.append('time_range', timeRange);
+      if (category !== 'all') params.append('category', category);
+      if (status !== 'all') params.append('status', status);
+
+      const result = await adminAPI.getSessionsCount(params);
+      setPreviewCount(result.count);
+    } catch (err) {
+      logger.error('Failed to load preview count for data management', {
+        timeRange,
+        category,
+        status,
+        error: getErrorMessage(err)
+      });
+      setPreviewCount(null);
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, [timeRange, category, status]);
 
   // Load issues for category filter
   useEffect(() => {
@@ -31,34 +65,7 @@ export default function DataManagementModal({ isOpen, onClose, onSuccess }: Data
     if (isOpen) {
       loadPreviewCount();
     }
-  }, [isOpen, timeRange, category, status]);
-
-  const loadIssues = async () => {
-    try {
-      const data = await issuesAPI.list();
-      setIssues(data);
-    } catch (err) {
-      console.error('Error loading issues:', err);
-    }
-  };
-
-  const loadPreviewCount = async () => {
-    setLoadingPreview(true);
-    try {
-      const params = new URLSearchParams();
-      if (timeRange !== 'all_time') params.append('time_range', timeRange);
-      if (category !== 'all') params.append('category', category);
-      if (status !== 'all') params.append('status', status);
-
-      const result = await adminAPI.getSessionsCount(params);
-      setPreviewCount(result.count);
-    } catch (err) {
-      console.error('Error loading preview count:', err);
-      setPreviewCount(null);
-    } finally {
-      setLoadingPreview(false);
-    }
-  };
+  }, [isOpen, timeRange, category, status, loadPreviewCount]);
 
   const handleDelete = async () => {
     if (confirmText !== 'DELETE') {
@@ -91,8 +98,8 @@ export default function DataManagementModal({ isOpen, onClose, onSuccess }: Data
       setStatus('all');
       setConfirmText('');
       setPreviewCount(null);
-    } catch (err: any) {
-      setError(err.response?.data?.error?.data?.message || 'Failed to delete sessions');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to delete sessions');
     } finally {
       setLoading(false);
     }
@@ -108,19 +115,25 @@ export default function DataManagementModal({ isOpen, onClose, onSuccess }: Data
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div
+        className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="data-management-title"
+      >
         {/* Header */}
         <div className="bg-gradient-to-r from-red-600 to-red-700 px-6 py-4 flex items-center justify-between rounded-t-xl">
           <div className="flex items-center">
-            <span className="text-3xl mr-3">🗑️</span>
+            <span className="text-3xl mr-3" aria-hidden="true">🗑️</span>
             <div>
-              <h2 className="text-2xl font-bold text-white">Data Management</h2>
+              <h2 id="data-management-title" className="text-2xl font-bold text-white">Data Management</h2>
               <p className="text-red-100 text-sm">Clear session data based on filters</p>
             </div>
           </div>
           <button
             onClick={handleClose}
             className="text-white hover:text-red-100 text-2xl leading-none"
+            aria-label="Close data management dialog"
           >
             ×
           </button>
@@ -255,4 +268,6 @@ export default function DataManagementModal({ isOpen, onClose, onSuccess }: Data
       </div>
     </div>
   );
-}
+});
+
+export default DataManagementModal;

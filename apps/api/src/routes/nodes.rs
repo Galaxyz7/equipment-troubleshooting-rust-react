@@ -1,11 +1,15 @@
 use crate::error::{ApiError, ApiResult};
+use crate::middleware::auth::AuthUser;
 use crate::models::{Node, CreateNode, UpdateNode, NodeType, NodeWithConnections, ConnectionWithTarget};
+use crate::utils::audit;
 use crate::AppState;
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    http::HeaderMap,
+    Extension, Json,
 };
 use serde::Deserialize;
+use serde_json::json;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -20,30 +24,30 @@ pub async fn list_nodes(
     State(state): State<AppState>,
     Query(query): Query<ListNodesQuery>,
 ) -> ApiResult<Json<Vec<Node>>> {
-    let mut sql = String::from(
+    // Build query safely using QueryBuilder to prevent SQL injection
+    use sqlx::QueryBuilder;
+    let mut query_builder = QueryBuilder::new(
         "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
          FROM nodes
          WHERE is_active = true"
     );
 
-    let mut conditions = Vec::new();
-
+    // Category filter - SAFE: uses parameterized query
     if let Some(ref category) = query.category {
-        conditions.push(format!("category = '{}'", category));
+        query_builder.push(" AND category = ");
+        query_builder.push_bind(category);
     }
 
+    // Node type filter - SAFE: uses parameterized query
     if let Some(ref node_type) = query.node_type {
-        conditions.push(format!("node_type = '{}'", node_type));
+        query_builder.push(" AND node_type = ");
+        query_builder.push_bind(node_type);
     }
 
-    if !conditions.is_empty() {
-        sql.push_str(" AND ");
-        sql.push_str(&conditions.join(" AND "));
-    }
+    query_builder.push(" ORDER BY created_at ASC");
 
-    sql.push_str(" ORDER BY created_at ASC");
-
-    let nodes = sqlx::query_as::<_, Node>(&sql)
+    let nodes = query_builder
+        .build_query_as::<Node>()
         .fetch_all(&state.db)
         .await?;
 
@@ -73,6 +77,8 @@ pub async fn get_node(
 /// Create a new node (ADMIN only)
 pub async fn create_node(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Json(req): Json<CreateNode>,
 ) -> ApiResult<Json<Node>> {
     // Validate input
@@ -104,6 +110,27 @@ pub async fn create_node(
     state.issue_graph_cache.invalidate(&cache_key).await;
     state.issue_tree_cache.invalidate(&node.category).await;
 
+    // Audit log the node creation
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::NodeCreated,
+        "node",
+        Some(&node.id.to_string()),
+        Some(json!({
+            "category": &node.category,
+            "node_type": &node.node_type,
+            "text": &node.text,
+            "semantic_id": &node.semantic_id,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
+
     Ok(Json(node))
 }
 
@@ -111,6 +138,8 @@ pub async fn create_node(
 /// Update a node (ADMIN only)
 pub async fn update_node(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateNode>,
 ) -> ApiResult<Json<Node>> {
@@ -161,25 +190,25 @@ pub async fn update_node(
 
     let mut query_builder = sqlx::query_as::<_, Node>(&query).bind(id);
 
-    if let Some(text) = req.text {
+    if let Some(ref text) = req.text {
         query_builder = query_builder.bind(text);
     }
-    if let Some(semantic_id) = req.semantic_id {
+    if let Some(ref semantic_id) = req.semantic_id {
         query_builder = query_builder.bind(semantic_id);
     }
-    if let Some(node_type) = req.node_type {
+    if let Some(ref node_type) = req.node_type {
         query_builder = query_builder.bind(node_type);
     }
-    if let Some(display_category) = req.display_category {
+    if let Some(ref display_category) = req.display_category {
         query_builder = query_builder.bind(display_category);
     }
-    if let Some(position_x) = req.position_x {
+    if let Some(ref position_x) = req.position_x {
         query_builder = query_builder.bind(position_x);
     }
-    if let Some(position_y) = req.position_y {
+    if let Some(ref position_y) = req.position_y {
         query_builder = query_builder.bind(position_y);
     }
-    if let Some(is_active) = req.is_active {
+    if let Some(ref is_active) = req.is_active {
         query_builder = query_builder.bind(is_active);
     }
 
@@ -190,6 +219,25 @@ pub async fn update_node(
     state.issue_graph_cache.invalidate(&cache_key).await;
     state.issue_tree_cache.invalidate(&node.category).await;
 
+    // Audit log the node update
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::NodeUpdated,
+        "node",
+        Some(&node.id.to_string()),
+        Some(json!({
+            "category": &node.category,
+            "updates": &req,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
+
     Ok(Json(node))
 }
 
@@ -197,6 +245,8 @@ pub async fn update_node(
 /// Hard delete a node and all its connections (ADMIN only)
 pub async fn delete_node(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Node>> {
     // Fetch the node first to return it after deletion
@@ -232,6 +282,26 @@ pub async fn delete_node(
     let cache_key = format!("graph_{}", node.category);
     state.issue_graph_cache.invalidate(&cache_key).await;
     state.issue_tree_cache.invalidate(&node.category).await;
+
+    // Audit log the node deletion
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::NodeDeleted,
+        "node",
+        Some(&node.id.to_string()),
+        Some(json!({
+            "category": &node.category,
+            "node_type": &node.node_type,
+            "text": &node.text,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
 
     Ok(Json(node))
 }

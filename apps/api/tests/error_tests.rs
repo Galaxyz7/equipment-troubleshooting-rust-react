@@ -46,11 +46,8 @@ async fn test_api_error_validation() {
     assert_eq!(error.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
-#[tokio::test]
-async fn test_api_error_conflict() {
-    let error = ApiError::conflict("Resource already exists");
-    assert_eq!(error.status_code(), StatusCode::CONFLICT);
-}
+// Test removed: conflict() method was unused and has been removed from the codebase
+// The Conflict variant still exists in ApiError enum for future use
 
 #[tokio::test]
 async fn test_api_result_ok() {

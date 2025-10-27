@@ -1,0 +1,334 @@
+warning: use of deprecated function `routes::questions::create_question`: Use POST /api/nodes instead
+   --> apps\api\src\main.rs:202:58
+    |
+202 |         .route("/api/questions", post(routes::questions::create_question))
+    |                                                          ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `routes::questions::update_question`: Use PUT /api/nodes/:id instead
+   --> apps\api\src\main.rs:203:61
+    |
+203 |         .route("/api/questions/:id", put(routes::questions::update_question))
+    |                                                             ^^^^^^^^^^^^^^^
+
+warning: use of deprecated function `routes::questions::delete_question`: Use DELETE /api/nodes/:id instead
+   --> apps\api\src\main.rs:204:64
+    |
+204 |         .route("/api/questions/:id", delete(routes::questions::delete_question))
+    |                                                                ^^^^^^^^^^^^^^^
+
+warning: use of deprecated function `routes::answers::create_answer`: Use POST /api/connections instead
+   --> apps\api\src\main.rs:205:77
+    |
+205 |         .route("/api/questions/:question_id/answers", post(routes::answers::create_answer))
+    |                                                                             ^^^^^^^^^^^^^
+
+warning: use of deprecated function `routes::answers::update_answer`: Use PUT /api/connections/:id instead
+   --> apps\api\src\main.rs:206:57
+    |
+206 |         .route("/api/answers/:id", put(routes::answers::update_answer))
+    |                                                         ^^^^^^^^^^^^^
+
+warning: use of deprecated function `routes::answers::delete_answer`: Use DELETE /api/connections/:id instead
+   --> apps\api\src\main.rs:207:60
+    |
+207 |         .route("/api/answers/:id", delete(routes::answers::delete_answer))
+    |                                                            ^^^^^^^^^^^^^
+
+warning: use of deprecated function `routes::questions::list_questions`: Use the graph-based API instead: /api/issues/:category/graph
+   --> apps\api\src\main.rs:270:57
+    |
+270 |         .route("/api/questions", get(routes::questions::list_questions))
+    |                                                         ^^^^^^^^^^^^^^
+
+warning: use of deprecated function `routes::questions::get_question`: Use the graph-based API instead
+   --> apps\api\src\main.rs:271:61
+    |
+271 |         .route("/api/questions/:id", get(routes::questions::get_question))
+    |                                                             ^^^^^^^^^^^^
+
+warning: use of deprecated function `routes::answers::list_answers`: Use GET /api/connections instead
+   --> apps\api\src\main.rs:273:76
+    |
+273 |         .route("/api/questions/:question_id/answers", get(routes::answers::list_answers))
+    |                                                                            ^^^^^^^^^^^^
+
+warning: field `category` is never read
+   --> apps\api\src\routes\admin.rs:113:9
+    |
+110 | pub struct StatsQueryParams {
+    |            ---------------- field in this struct
+...
+113 |     pub category: Option<String>,
+    |         ^^^^^^^^
+    |
+    = note: `StatsQueryParams` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `equipment-troubleshooting` (bin "equipment-troubleshooting") generated 10 warnings
+warning: function `generate_test_token` is never used
+  --> apps\api\tests\common\mod.rs:56:8
+   |
+56 | pub fn generate_test_token(user_id: Uuid, email: &str, role: UserRole) -> String {
+   |        ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `create_test_issue` is never used
+  --> apps\api\tests\common\mod.rs:62:14
+   |
+62 | pub async fn create_test_issue(pool: &PgPool, category: &str, name: &str) -> Uuid {
+   |              ^^^^^^^^^^^^^^^^^
+
+warning: function `create_test_connection` is never used
+  --> apps\api\tests\common\mod.rs:84:14
+   |
+84 | pub async fn create_test_connection(
+   |              ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `equipment-troubleshooting` (bin "equipment-troubleshooting" test) generated 10 warnings (10 duplicates)
+warning: `equipment-troubleshooting` (test "auth_tests") generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.57s
+     Running unittests src\lib.rs (C:\Users\Alex\Documents\GitHub\equipment-troubleshooting-rust-react\target\debug\deps\equipment_troubleshooting-a02c6b21ab6fb248.exe)
+
+running 86 tests
+test error::tests::test_validation_error ... ok
+test middleware::auth::tests::test_auth_user_clone ... ok
+test error::tests::test_error_status_codes ... ok
+test middleware::rate_limit::tests::test_rate_limiter_basic ... ok
+test middleware::rate_limit::tests::test_rate_limiter_different_ips ... ok
+test middleware::security::tests::test_security_headers_added ... ok
+test error::export_bindings_validationfield ... ok
+test models::export_bindings_answer ... ok
+test models::export_bindings_connection ... ok
+test models::export_bindings_createconnection ... ok
+test models::export_bindings_createanswer ... ok
+test models::export_bindings_createquestion ... ok
+test models::export_bindings_nodetype ... ok
+test models::export_bindings_question ... ok
+test error::export_bindings_apierror ... ok
+test models::export_bindings_updateanswer ... ok
+test models::export_bindings_updateconnection ... ok
+test models::export_bindings_createnode ... ok
+test models::export_bindings_updatequestion ... ok
+test models::export_bindings_userrole ... ok
+test routes::admin::export_bindings_auditlogentry ... ok
+test models::export_bindings_node ... ok
+test models::export_bindings_questionwithanswers ... ok
+test error::export_bindings_errorresponse ... ok
+test routes::admin::export_bindings_cachestats ... ok
+test routes::admin::export_bindings_categorylistresponse ... ok
+test models::export_bindings_updatenode ... ok
+test routes::admin::export_bindings_categorystats ... ok
+test routes::admin::tests::test_dashboard_stats ... ok
+test routes::admin::tests::test_session_summary ... ok
+test routes::answers::tests::test_create_answer_validation ... ok
+test routes::answers::tests::test_update_answer_partial ... ok
+test routes::admin::export_bindings_categoryupdateresponse ... ok
+test models::export_bindings_connectionwithtarget ... ok
+test routes::admin::export_bindings_conclusionstats ... ok
+test routes::admin::export_bindings_databasemetrics ... ok
+test routes::auth::tests::test_login_request_validation ... ok
+test routes::auth::tests::test_user_info_serialization ... ok
+test routes::admin::export_bindings_auditlogsresponse ... ok
+test routes::admin::export_bindings_cachemetrics ... ok
+test routes::admin::export_bindings_deletesessionsresponse ... ok
+test routes::admin::export_bindings_renamecategoryrequest ... ok
+test routes::admin::export_bindings_sessionsummary ... ok
+test routes::auth::export_bindings_loginrequest ... ok
+test routes::auth::export_bindings_refreshrequest ... ok
+test models::export_bindings_issuegraph ... ok
+test models::export_bindings_nodewithconnections ... ok
+test routes::issues::export_bindings_answerdestination ... ok
+test routes::issues::export_bindings_connectionexportdata ... ok
+test routes::issues::export_bindings_createissuerequest ... ok
+test routes::issues::export_bindings_importerror ... ok
+test routes::admin::export_bindings_sessionslistresponse ... ok
+test routes::questions::tests::test_create_question_validation ... ok
+test routes::questions::tests::test_update_question_partial ... ok
+test routes::issues::export_bindings_importsuccess ... ok
+test routes::issues::export_bindings_issue ... ok
+test routes::auth::export_bindings_userinfo ... ok
+test routes::issues::export_bindings_issueimportmetadata ... ok
+test routes::admin::export_bindings_dashboardstats ... ok
+test routes::issues::export_bindings_nodeexportdata ... ok
+test routes::issues::export_bindings_updateissuerequest ... ok
+test routes::troubleshoot::tests::test_start_session_request ... ok
+test routes::troubleshoot::tests::test_submit_answer_request ... ok
+test tests::generate_typescript_types ... ok
+test utils::cache::tests::test_cache_basic ... ok
+test routes::troubleshoot::export_bindings_navigationoption ... ok
+test utils::cache::tests::test_cache_invalidate ... ok
+test utils::cache::tests::test_cache_max_size ... ok
+test routes::auth::export_bindings_loginresponse ... ok
+test utils::jwt::tests::test_claims_creation ... ok
+test utils::jwt::tests::test_extract_token ... ok
+test routes::troubleshoot::export_bindings_startsessionrequest ... ok
+test routes::troubleshoot::export_bindings_submitanswerrequest ... ok
+test routes::issues::export_bindings_treeanswer ... ok
+test routes::admin::export_bindings_performancemetrics ... ok
+test routes::issues::export_bindings_importresult ... ok
+test routes::troubleshoot::export_bindings_historystep ... ok
+test utils::jwt::export_bindings_claims ... ok
+test routes::issues::export_bindings_issueexportdata ... ok
+test routes::issues::export_bindings_treenode ... ok
+test routes::troubleshoot::export_bindings_sessionhistoryresponse ... ok
+test routes::troubleshoot::export_bindings_startsessionresponse ... ok
+test routes::troubleshoot::export_bindings_submitanswerresponse ... ok
+test routes::issues::export_bindings_issuetree ... ok
+test middleware::rate_limit::tests::test_rate_limiter_cleanup ... ok
+test utils::cache::tests::test_cache_expiry ... ok
+
+test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+     Running unittests src\bin\apply_migration.rs (C:\Users\Alex\Documents\GitHub\equipment-troubleshooting-rust-react\target\debug\deps\apply_migration-8802a7d8f162668a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (C:\Users\Alex\Documents\GitHub\equipment-troubleshooting-rust-react\target\debug\deps\equipment_troubleshooting-0bb204b5d1830032.exe)
+
+running 85 tests
+test error::tests::test_validation_error ... ok
+test middleware::auth::tests::test_auth_user_clone ... ok
+test error::tests::test_error_status_codes ... ok
+test middleware::rate_limit::tests::test_rate_limiter_basic ... ok
+test middleware::rate_limit::tests::test_rate_limiter_different_ips ... ok
+test middleware::security::tests::test_security_headers_added ... ok
+test models::export_bindings_createconnection ... ok
+test error::export_bindings_validationfield ... ok
+test models::export_bindings_answer ... ok
+test models::export_bindings_createquestion ... ok
+test models::export_bindings_connection ... ok
+test models::export_bindings_createanswer ... ok
+test models::export_bindings_question ... ok
+test models::export_bindings_nodetype ... ok
+test models::export_bindings_createnode ... ok
+test models::export_bindings_updateanswer ... ok
+test models::export_bindings_updateconnection ... ok
+test error::export_bindings_apierror ... ok
+test models::export_bindings_updatequestion ... ok
+test models::export_bindings_userrole ... ok
+test routes::admin::export_bindings_auditlogentry ... ok
+test models::export_bindings_node ... ok
+test models::export_bindings_questionwithanswers ... ok
+test error::export_bindings_errorresponse ... ok
+test routes::admin::export_bindings_cachestats ... ok
+test routes::admin::export_bindings_categorylistresponse ... ok
+test routes::admin::export_bindings_categorystats ... ok
+test models::export_bindings_updatenode ... ok
+test routes::admin::tests::test_dashboard_stats ... ok
+test routes::admin::tests::test_session_summary ... ok
+test routes::answers::tests::test_create_answer_validation ... ok
+test routes::answers::tests::test_update_answer_partial ... ok
+test models::export_bindings_connectionwithtarget ... ok
+test routes::admin::export_bindings_categoryupdateresponse ... ok
+test routes::admin::export_bindings_conclusionstats ... ok
+test routes::admin::export_bindings_auditlogsresponse ... ok
+test routes::auth::tests::test_login_request_validation ... ok
+test routes::auth::tests::test_user_info_serialization ... ok
+test routes::admin::export_bindings_databasemetrics ... ok
+test routes::admin::export_bindings_deletesessionsresponse ... ok
+test routes::admin::export_bindings_cachemetrics ... ok
+test routes::admin::export_bindings_renamecategoryrequest ... ok
+test routes::admin::export_bindings_sessionsummary ... ok
+test routes::auth::export_bindings_loginrequest ... ok
+test routes::auth::export_bindings_refreshrequest ... ok
+test models::export_bindings_issuegraph ... ok
+test models::export_bindings_nodewithconnections ... ok
+test routes::issues::export_bindings_answerdestination ... ok
+test routes::issues::export_bindings_connectionexportdata ... ok
+test routes::issues::export_bindings_createissuerequest ... ok
+test routes::issues::export_bindings_importerror ... ok
+test routes::admin::export_bindings_sessionslistresponse ... ok
+test routes::questions::tests::test_create_question_validation ... ok
+test routes::questions::tests::test_update_question_partial ... ok
+test routes::issues::export_bindings_importsuccess ... ok
+test routes::issues::export_bindings_issue ... ok
+test routes::issues::export_bindings_issueimportmetadata ... ok
+test routes::auth::export_bindings_userinfo ... ok
+test routes::admin::export_bindings_dashboardstats ... ok
+test routes::issues::export_bindings_nodeexportdata ... ok
+test routes::issues::export_bindings_updateissuerequest ... ok
+test routes::troubleshoot::tests::test_start_session_request ... ok
+test routes::troubleshoot::tests::test_submit_answer_request ... ok
+test utils::cache::tests::test_cache_basic ... ok
+test routes::troubleshoot::export_bindings_navigationoption ... ok
+test utils::cache::tests::test_cache_invalidate ... ok
+test utils::cache::tests::test_cache_max_size ... ok
+test routes::auth::export_bindings_loginresponse ... ok
+test utils::jwt::tests::test_claims_creation ... ok
+test utils::jwt::tests::test_extract_token ... ok
+test routes::troubleshoot::export_bindings_startsessionrequest ... ok
+test routes::troubleshoot::export_bindings_submitanswerrequest ... ok
+test routes::issues::export_bindings_treeanswer ... ok
+test routes::admin::export_bindings_performancemetrics ... ok
+test routes::issues::export_bindings_importresult ... ok
+test routes::troubleshoot::export_bindings_historystep ... ok
+test utils::jwt::export_bindings_claims ... ok
+test routes::issues::export_bindings_issueexportdata ... ok
+test routes::issues::export_bindings_treenode ... ok
+test routes::troubleshoot::export_bindings_sessionhistoryresponse ... ok
+test routes::troubleshoot::export_bindings_startsessionresponse ... ok
+test routes::troubleshoot::export_bindings_submitanswerresponse ... ok
+test routes::issues::export_bindings_issuetree ... ok
+test middleware::rate_limit::tests::test_rate_limiter_cleanup ... ok
+test utils::cache::tests::test_cache_expiry ... ok
+
+test result: ok. 85 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+
+     Running unittests src\bin\hash_password.rs (C:\Users\Alex\Documents\GitHub\equipment-troubleshooting-rust-react\target\debug\deps\hash_password-55c85bc364cc087c.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\run_migration.rs (C:\Users\Alex\Documents\GitHub\equipment-troubleshooting-rust-react\target\debug\deps\run_migration-8cb4d552b750257f.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\auth_tests.rs (C:\Users\Alex\Documents\GitHub\equipment-troubleshooting-rust-react\target\debug\deps\auth_tests-3e4fcc01acd0d405.exe)
+
+running 10 tests
+test test_extract_token_empty ... ok
+test test_extract_token_invalid_format ... ok
+test test_extract_token_from_header ... ok
+test test_generate_and_verify_token ... ok
+test test_verify_invalid_token ... ok
+test test_user_roles ... ok
+test test_password_hashing ... ok
+test common::tests::test_setup_test_db ... FAILED
+test test_create_and_cleanup_test_user ... FAILED
+test common::tests::test_create_test_user ... FAILED
+
+failures:
+
+---- common::tests::test_setup_test_db stdout ----
+
+thread 'common::tests::test_setup_test_db' panicked at apps\api\tests\common\mod.rs:14:10:
+Failed to connect to test database: PoolTimedOut
+
+---- test_create_and_cleanup_test_user stdout ----
+
+thread 'test_create_and_cleanup_test_user' panicked at apps\api\tests\common\mod.rs:14:10:
+Failed to connect to test database: PoolTimedOut
+
+---- common::tests::test_create_test_user stdout ----
+
+thread 'common::tests::test_create_test_user' panicked at apps\api\tests\common\mod.rs:14:10:
+Failed to connect to test database: PoolTimedOut
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    common::tests::test_create_test_user
+    common::tests::test_setup_test_db
+    test_create_and_cleanup_test_user
+
+test result: FAILED. 7 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.02s
+
+error: test failed, to rerun pass `--test auth_tests`

@@ -1,10 +1,16 @@
 use crate::error::ApiResult;
+use crate::middleware::auth::AuthUser;
+use crate::utils::audit;
 use crate::AppState;
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
+use axum::Extension;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::Row;
 use ts_rs::TS;
+use uuid::Uuid;
 
 /// Session summary for admin list view
 #[derive(Debug, Serialize, TS)]
@@ -34,9 +40,13 @@ pub struct SessionsListResponse {
 #[derive(Debug, Serialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct DashboardStats {
+    #[ts(type = "number")]
     pub total_sessions: i64,
+    #[ts(type = "number")]
     pub completed_sessions: i64,
+    #[ts(type = "number")]
     pub abandoned_sessions: i64,
+    #[ts(type = "number")]
     pub active_sessions: i64,
     pub avg_steps_to_completion: f64,
     pub most_common_conclusions: Vec<ConclusionStats>,
@@ -48,6 +58,7 @@ pub struct DashboardStats {
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct ConclusionStats {
     pub conclusion: String,
+    #[ts(type = "number")]
     pub count: i64,
 }
 
@@ -56,6 +67,7 @@ pub struct ConclusionStats {
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct CategoryStats {
     pub category: String,
+    #[ts(type = "number")]
     pub count: i64,
 }
 
@@ -110,7 +122,6 @@ fn default_page_size() -> i32 {
 pub struct StatsQueryParams {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    pub category: Option<String>,
 }
 
 /// Query parameters for delete sessions endpoint
@@ -138,54 +149,53 @@ pub async fn list_sessions(
     let page_size = params.page_size.min(200); // Cap at 200
     let offset = (page - 1) * page_size;
 
-    // Build WHERE clause dynamically based on filters
-    let mut conditions: Vec<String> = vec![];
+    // Build query safely using QueryBuilder to prevent SQL injection
+    use sqlx::QueryBuilder;
+
+    // Build count query first
+    let mut count_query = QueryBuilder::new("SELECT COUNT(*) FROM sessions WHERE 1=1");
 
     if let Some(status) = &params.status {
         match status.as_str() {
-            "completed" => conditions.push("completed_at IS NOT NULL".to_string()),
-            "abandoned" => conditions.push("abandoned = true".to_string()),
+            "completed" => {
+                count_query.push(" AND completed_at IS NOT NULL");
+            }
+            "abandoned" => {
+                count_query.push(" AND abandoned = true");
+            }
             "active" => {
-                conditions.push("completed_at IS NULL".to_string());
-                conditions.push("abandoned = false".to_string());
+                count_query.push(" AND completed_at IS NULL");
+                count_query.push(" AND abandoned = false");
             }
             _ => {}
         }
     }
 
     if let Some(start_date) = &params.start_date {
-        conditions.push(format!("started_at >= '{}'", start_date));
+        count_query.push(" AND started_at >= ");
+        count_query.push_bind(start_date);
     }
 
     if let Some(end_date) = &params.end_date {
-        conditions.push(format!("started_at <= '{}'", end_date));
+        count_query.push(" AND started_at <= ");
+        count_query.push_bind(end_date);
     }
 
     if let Some(search) = &params.search {
-        conditions.push(format!(
-            "(tech_identifier ILIKE '%{}%' OR client_site ILIKE '%{}%')",
-            search.replace("'", "''"),
-            search.replace("'", "''")
-        ));
+        count_query.push(" AND (tech_identifier ILIKE ");
+        count_query.push_bind(format!("%{}%", search));
+        count_query.push(" OR client_site ILIKE ");
+        count_query.push_bind(format!("%{}%", search));
+        count_query.push(")");
     }
 
     if let Some(category) = &params.category {
-        // Filter by category in the first step
-        conditions.push(format!(
-            "(steps->0->>'category')::text = '{}'",
-            category.replace("'", "''")
-        ));
+        count_query.push(" AND (steps->0->>'category')::text = ");
+        count_query.push_bind(category);
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    // Get total count with same filters (with error handling)
-    let count_query = format!("SELECT COUNT(*) FROM sessions {}", where_clause);
-    let total_count = match sqlx::query_scalar::<_, i64>(&count_query)
+    // Execute count query
+    let total_count = match count_query.build_query_scalar::<i64>()
         .fetch_one(&state.db)
         .await {
             Ok(count) => count,
@@ -204,27 +214,60 @@ pub async fn list_sessions(
             }
         };
 
-    // Fetch sessions with pagination and filters
-    let query = format!(
-        r#"
-        SELECT
-            session_id,
-            started_at,
-            completed_at,
-            abandoned,
-            tech_identifier,
-            client_site,
-            final_conclusion,
-            COALESCE(jsonb_array_length(steps), 0)::int as step_count
-        FROM sessions
-        {}
-        ORDER BY started_at DESC
-        LIMIT {} OFFSET {}
-        "#,
-        where_clause, page_size, offset
+    // Build sessions query with same filters
+    let mut sessions_query = QueryBuilder::new(
+        "SELECT session_id, started_at, completed_at, abandoned, \
+         tech_identifier, client_site, final_conclusion, \
+         COALESCE(jsonb_array_length(steps), 0)::int as step_count \
+         FROM sessions WHERE 1=1"
     );
 
-    let sessions = match sqlx::query_as::<_, (
+    if let Some(status) = &params.status {
+        match status.as_str() {
+            "completed" => {
+                sessions_query.push(" AND completed_at IS NOT NULL");
+            }
+            "abandoned" => {
+                sessions_query.push(" AND abandoned = true");
+            }
+            "active" => {
+                sessions_query.push(" AND completed_at IS NULL");
+                sessions_query.push(" AND abandoned = false");
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(start_date) = &params.start_date {
+        sessions_query.push(" AND started_at >= ");
+        sessions_query.push_bind(start_date);
+    }
+
+    if let Some(end_date) = &params.end_date {
+        sessions_query.push(" AND started_at <= ");
+        sessions_query.push_bind(end_date);
+    }
+
+    if let Some(search) = &params.search {
+        sessions_query.push(" AND (tech_identifier ILIKE ");
+        sessions_query.push_bind(format!("%{}%", search));
+        sessions_query.push(" OR client_site ILIKE ");
+        sessions_query.push_bind(format!("%{}%", search));
+        sessions_query.push(")");
+    }
+
+    if let Some(category) = &params.category {
+        sessions_query.push(" AND (steps->0->>'category')::text = ");
+        sessions_query.push_bind(category);
+    }
+
+    sessions_query.push(" ORDER BY started_at DESC LIMIT ");
+    sessions_query.push_bind(page_size);
+    sessions_query.push(" OFFSET ");
+    sessions_query.push_bind(offset);
+
+    // Execute sessions query
+    let sessions = match sessions_query.build_query_as::<(
         String,
         chrono::DateTime<chrono::Utc>,
         Option<chrono::DateTime<chrono::Utc>>,
@@ -233,7 +276,7 @@ pub async fn list_sessions(
         Option<String>,
         Option<String>,
         i32,
-    )>(&query)
+    )>()
     .fetch_all(&state.db)
     .await {
         Ok(sessions) => sessions,
@@ -277,22 +320,9 @@ pub async fn get_stats(
     State(state): State<AppState>,
     Query(params): Query<StatsQueryParams>,
 ) -> ApiResult<Json<DashboardStats>> {
-    // Build date filter conditions
-    let mut date_conditions = vec![];
-    if let Some(start) = &params.start_date {
-        date_conditions.push(format!("started_at >= '{}'", start));
-    }
-    if let Some(end) = &params.end_date {
-        date_conditions.push(format!("started_at <= '{}'", end));
-    }
-    let date_filter = if date_conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", date_conditions.join(" AND "))
-    };
-
-    // Single optimized query using CTEs to compute all stats in one database roundtrip
-    let query = format!(
+    // Build query safely with optional date filters using CASE/COALESCE
+    // This avoids string concatenation while maintaining the CTE structure
+    let query_with_binds = sqlx::query(
         r#"
         WITH filtered_sessions AS (
             SELECT
@@ -303,7 +333,8 @@ pub async fn get_stats(
                 final_conclusion,
                 steps
             FROM sessions
-            {}
+            WHERE ($1::timestamp IS NULL OR started_at >= $1::timestamp)
+              AND ($2::timestamp IS NULL OR started_at <= $2::timestamp)
         ),
         basic_stats AS (
             SELECT
@@ -361,17 +392,17 @@ pub async fn get_stats(
                  FROM category_stats),
                 '[]'::json
             ) as categories
-        "#,
-        date_filter
-    );
+        "#
+    )
+    .bind(params.start_date.as_ref())
+    .bind(params.end_date.as_ref());
 
     // Execute query with error handling and logging
-    let row = match sqlx::query(&query).fetch_one(&state.db).await {
+    let row = match query_with_binds.fetch_one(&state.db).await {
         Ok(row) => row,
         Err(e) => {
             // Log the detailed error with proper tracing
             tracing::error!("❌ Error executing stats query: {:?}", e);
-            tracing::debug!("SQL Query that failed: {}", query);
 
             // Check if it's a table missing error
             if e.to_string().contains("relation") && e.to_string().contains("does not exist") {
@@ -533,22 +564,25 @@ pub async fn get_performance_metrics(
 /// Delete sessions based on filters (ADMIN only)
 pub async fn delete_sessions(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Query(params): Query<DeleteSessionsParams>,
 ) -> ApiResult<Json<DeleteSessionsResponse>> {
-    // Build WHERE clause based on filters
-    let mut conditions: Vec<String> = vec![];
+    // Build DELETE query safely using QueryBuilder to prevent SQL injection
+    use sqlx::QueryBuilder;
+    let mut query = QueryBuilder::new("DELETE FROM sessions WHERE 1=1");
 
     // Time range filter based on started_at
     if let Some(time_range) = &params.time_range {
         match time_range.as_str() {
             "today" => {
-                conditions.push("started_at >= CURRENT_DATE".to_string());
+                query.push(" AND started_at >= CURRENT_DATE");
             }
             "past_week" => {
-                conditions.push("started_at >= NOW() - INTERVAL '7 days'".to_string());
+                query.push(" AND started_at >= NOW() - INTERVAL '7 days'");
             }
             "past_month" => {
-                conditions.push("started_at >= NOW() - INTERVAL '30 days'".to_string());
+                query.push(" AND started_at >= NOW() - INTERVAL '30 days'");
             }
             "all_time" => {
                 // No time filter, all sessions
@@ -559,29 +593,25 @@ pub async fn delete_sessions(
         }
     }
 
-    // Category filter (issue category)
+    // Category filter (issue category) - SAFE: uses parameterized query
     if let Some(category) = &params.category {
-        conditions.push(format!(
-            "(steps->0->>'category')::text = '{}'",
-            category.replace("'", "''") // SQL injection prevention
-        ));
+        query.push(" AND (steps->0->>'category')::text = ");
+        query.push_bind(category);
     }
 
     // Status filter
     if let Some(status) = &params.status {
         match status.as_str() {
             "completed" => {
-                conditions.push("completed_at IS NOT NULL".to_string());
+                query.push(" AND completed_at IS NOT NULL");
             }
             "abandoned" => {
-                conditions.push(
-                    "(abandoned = true OR (completed_at IS NULL AND started_at <= NOW() - INTERVAL '1 hour'))".to_string()
-                );
+                query.push(" AND (abandoned = true OR (completed_at IS NULL AND started_at <= NOW() - INTERVAL '1 hour'))");
             }
             "active" => {
-                conditions.push("completed_at IS NULL".to_string());
-                conditions.push("abandoned = false".to_string());
-                conditions.push("started_at > NOW() - INTERVAL '1 hour'".to_string());
+                query.push(" AND completed_at IS NULL");
+                query.push(" AND abandoned = false");
+                query.push(" AND started_at > NOW() - INTERVAL '1 hour'");
             }
             "all" => {
                 // No status filter
@@ -592,24 +622,14 @@ pub async fn delete_sessions(
         }
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    // Build and execute DELETE query
-    let delete_query = format!("DELETE FROM sessions {}", where_clause);
-
     tracing::info!(
         "🗑️  Executing session deletion with filters - time_range: {:?}, category: {:?}, status: {:?}",
         params.time_range,
         params.category,
         params.status
     );
-    tracing::debug!("Delete query: {}", delete_query);
 
-    let result = match sqlx::query(&delete_query).execute(&state.db).await {
+    let result = match query.build().execute(&state.db).await {
         Ok(result) => result,
         Err(e) => {
             tracing::error!("❌ Error deleting sessions: {:?}", e);
@@ -623,6 +643,27 @@ pub async fn delete_sessions(
 
     tracing::info!("✅ Successfully deleted {} sessions", deleted_count);
 
+    // Audit log the session deletion
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| crate::error::ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::SessionsDeleted,
+        "sessions",
+        None,
+        Some(json!({
+            "deleted_count": deleted_count,
+            "time_range": &params.time_range,
+            "category": &params.category,
+            "status": &params.status,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
+
     Ok(Json(DeleteSessionsResponse { deleted_count }))
 }
 
@@ -632,20 +673,21 @@ pub async fn count_sessions(
     State(state): State<AppState>,
     Query(params): Query<DeleteSessionsParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    // Build WHERE clause based on filters (same logic as delete_sessions)
-    let mut conditions: Vec<String> = vec![];
+    // Build COUNT query safely using QueryBuilder to prevent SQL injection
+    use sqlx::QueryBuilder;
+    let mut query = QueryBuilder::new("SELECT COUNT(*) FROM sessions WHERE 1=1");
 
     // Time range filter
     if let Some(time_range) = &params.time_range {
         match time_range.as_str() {
             "today" => {
-                conditions.push("started_at >= CURRENT_DATE".to_string());
+                query.push(" AND started_at >= CURRENT_DATE");
             }
             "past_week" => {
-                conditions.push("started_at >= NOW() - INTERVAL '7 days'".to_string());
+                query.push(" AND started_at >= NOW() - INTERVAL '7 days'");
             }
             "past_month" => {
-                conditions.push("started_at >= NOW() - INTERVAL '30 days'".to_string());
+                query.push(" AND started_at >= NOW() - INTERVAL '30 days'");
             }
             "all_time" => {}
             _ => {
@@ -654,29 +696,25 @@ pub async fn count_sessions(
         }
     }
 
-    // Category filter
+    // Category filter - SAFE: uses parameterized query
     if let Some(category) = &params.category {
-        conditions.push(format!(
-            "(steps->0->>'category')::text = '{}'",
-            category.replace("'", "''")
-        ));
+        query.push(" AND (steps->0->>'category')::text = ");
+        query.push_bind(category);
     }
 
     // Status filter
     if let Some(status) = &params.status {
         match status.as_str() {
             "completed" => {
-                conditions.push("completed_at IS NOT NULL".to_string());
+                query.push(" AND completed_at IS NOT NULL");
             }
             "abandoned" => {
-                conditions.push(
-                    "(abandoned = true OR (completed_at IS NULL AND started_at <= NOW() - INTERVAL '1 hour'))".to_string()
-                );
+                query.push(" AND (abandoned = true OR (completed_at IS NULL AND started_at <= NOW() - INTERVAL '1 hour'))");
             }
             "active" => {
-                conditions.push("completed_at IS NULL".to_string());
-                conditions.push("abandoned = false".to_string());
-                conditions.push("started_at > NOW() - INTERVAL '1 hour'".to_string());
+                query.push(" AND completed_at IS NULL");
+                query.push(" AND abandoned = false");
+                query.push(" AND started_at > NOW() - INTERVAL '1 hour'");
             }
             "all" => {}
             _ => {
@@ -685,15 +723,7 @@ pub async fn count_sessions(
         }
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    let count_query = format!("SELECT COUNT(*) FROM sessions {}", where_clause);
-
-    let count = match sqlx::query_scalar::<_, i64>(&count_query)
+    let count = match query.build_query_scalar::<i64>()
         .fetch_one(&state.db)
         .await
     {
@@ -754,11 +784,11 @@ pub async fn list_categories(State(state): State<AppState>) -> ApiResult<Json<Ca
     }))
 }
 
-/// PUT /api/admin/categories/:old_name
+/// PUT /api/admin/categories/:name
 /// Rename a category (updates all nodes using it)
 pub async fn rename_category(
     State(state): State<AppState>,
-    axum::extract::Path(old_name): axum::extract::Path<String>,
+    axum::extract::Path(name): axum::extract::Path<String>,
     Json(req): Json<RenameCategoryRequest>,
 ) -> ApiResult<Json<CategoryUpdateResponse>> {
     let result = sqlx::query!(
@@ -768,7 +798,7 @@ pub async fn rename_category(
         WHERE display_category = $2
         "#,
         req.new_name,
-        old_name
+        name
     )
     .execute(&state.db)
     .await?;

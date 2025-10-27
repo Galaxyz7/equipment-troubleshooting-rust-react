@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { issuesAPI } from '../lib/api';
 import type { Issue } from '../types/issues';
@@ -6,6 +6,9 @@ import IssueCard from '../components/IssueCard';
 import TreeEditorModal from '../components/TreeEditorModal';
 import CreateIssueModal from '../components/CreateIssueModal';
 import ImportModal from '../components/ImportModal';
+import { AccessibleConfirm } from '../components/AccessibleConfirm';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 export default function IssuesListPage() {
   const navigate = useNavigate();
@@ -16,6 +19,14 @@ export default function IssuesListPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Accessible confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   useEffect(() => {
     loadIssues();
@@ -35,76 +46,80 @@ export default function IssuesListPage() {
         .filter(issue => !subCategories.includes(issue.category))
         .sort((a, b) => a.name.localeCompare(b.name))
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       setError('Failed to load issues');
-      console.error('Error loading issues:', err);
+      logger.error('Failed to load issues list', { error: getErrorMessage(err) });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleToggle = async (category: string, force = false) => {
+  const handleToggle = useCallback(async (category: string, force = false) => {
     setError(null);
     try {
       const updatedIssue = await issuesAPI.toggle(category, force);
-      setIssues(issues.map(issue =>
+      setIssues(prevIssues => prevIssues.map(issue =>
         issue.category === category ? updatedIssue : issue
       ));
-    } catch (err: any) {
-      // Check if this is a validation error about incomplete nodes
-      const validationError = err.response?.data?.error;
-      if (validationError?.type === 'validation' && validationError?.data?.fields?.incomplete_nodes) {
-        const message = validationError.data.fields.incomplete_nodes;
-        const confirmed = confirm(
-          `${message}\n\nDo you want to activate this issue anyway?`
-        );
-        if (confirmed) {
-          // Retry with force=true
-          await handleToggle(category, true);
+    } catch (err: unknown) {
+      // Check if this is an axios error with validation data
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { data?: { error?: { type?: string; data?: { fields?: { incomplete_nodes?: string }; message?: string } } } } };
+        const validationError = axiosErr.response?.data?.error;
+        if (validationError?.type === 'validation' && validationError?.data?.fields?.incomplete_nodes) {
+          const message = validationError.data.fields.incomplete_nodes;
+          setConfirmDialog({
+            isOpen: true,
+            title: 'Validation Warning',
+            message: `${message}\n\nDo you want to activate this issue anyway?`,
+            onConfirm: () => {
+              // Retry with force=true
+              handleToggle(category, true);
+            },
+          });
+          return;
         }
-      } else {
-        const errorMessage = err.response?.data?.error?.data?.message ||
-                            'Failed to toggle issue status. Please try again.';
-        setError(errorMessage);
-        console.error('Error toggling issue:', err);
       }
+      setError(getErrorMessage(err) || 'Failed to toggle issue status. Please try again.');
+      logger.error('Failed to toggle issue status', { category, error: getErrorMessage(err) });
     }
-  };
+  }, []);
 
-  const handleTest = (category: string) => {
+  const handleTest = useCallback((category: string) => {
     // Open the troubleshoot page with this category as the starting point
     window.open(`/?category=${category}`, '_blank');
-  };
+  }, []);
 
-  const handleEdit = (category: string) => {
-    const issue = issues.find(i => i.category === category);
-    if (issue) {
-      setEditingIssue(issue);
-    }
-  };
+  const handleEdit = useCallback((category: string) => {
+    setIssues(prevIssues => {
+      const issue = prevIssues.find(i => i.category === category);
+      if (issue) {
+        setEditingIssue(issue);
+      }
+      return prevIssues;
+    });
+  }, []);
 
-  const handleDelete = async (category: string, deleteSessions: boolean = false) => {
+  const handleDelete = useCallback(async (category: string, deleteSessions: boolean = false) => {
     setError(null);
     try {
       await issuesAPI.delete(category, deleteSessions);
-      setIssues(issues.filter(issue => issue.category !== category));
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.error?.data?.message ||
-                          'Failed to delete issue. Please try again.';
-      setError(errorMessage);
-      console.error('Error deleting issue:', err);
+      setIssues(prevIssues => prevIssues.filter(issue => issue.category !== category));
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to delete issue. Please try again.');
+      logger.error('Failed to delete issue', { category, deleteSessions, error: getErrorMessage(err) });
     }
-  };
+  }, []);
 
-  const handleCreateNew = () => {
+  const handleCreateNew = useCallback(() => {
     setShowCreateModal(true);
-  };
+  }, []);
 
-  const handleIssueCreated = (newIssue: Issue) => {
-    setIssues([...issues, newIssue].sort((a, b) => a.name.localeCompare(b.name)));
-  };
+  const handleIssueCreated = useCallback((newIssue: Issue) => {
+    setIssues(prevIssues => [...prevIssues, newIssue].sort((a, b) => a.name.localeCompare(b.name)));
+  }, []);
 
-  const handleExportAll = async () => {
+  const handleExportAll = useCallback(async () => {
     setError(null);
     try {
       const data = await issuesAPI.exportAll();
@@ -117,15 +132,13 @@ export default function IssuesListPage() {
       URL.revokeObjectURL(url);
       setSuccessMessage('All issues exported successfully!');
       setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.error?.data?.message ||
-                          'Failed to export issues. Please try again.';
-      setError(errorMessage);
-      console.error('Error exporting issues:', err);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to export issues. Please try again.');
+      logger.error('Failed to export all issues', { error: getErrorMessage(err) });
     }
-  };
+  }, []);
 
-  const handleExportSingle = async (category: string) => {
+  const handleExportSingle = useCallback(async (category: string) => {
     setError(null);
     try {
       const data = await issuesAPI.exportIssue(category);
@@ -138,24 +151,22 @@ export default function IssuesListPage() {
       URL.revokeObjectURL(url);
       setSuccessMessage(`Issue "${category}" exported successfully!`);
       setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.error?.data?.message ||
-                          'Failed to export issue. Please try again.';
-      setError(errorMessage);
-      console.error('Error exporting issue:', err);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to export issue. Please try again.');
+      logger.error('Failed to export single issue', { category, error: getErrorMessage(err) });
     }
-  };
+  }, []);
 
-  const handleImportComplete = () => {
+  const handleImportComplete = useCallback(() => {
     setShowImportModal(false);
     loadIssues(); // Reload issues after import
-  };
+  }, []);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     navigate('/login');
-  };
+  }, [navigate]);
 
   if (loading) {
     return (
@@ -176,18 +187,21 @@ export default function IssuesListPage() {
           <button
             onClick={() => navigate('/admin/analytics')}
             className="px-5 py-[10px] rounded-md bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5"
+            aria-label="Go to analytics dashboard"
           >
             📊 Analytics
           </button>
           <button
             onClick={() => navigate('/')}
             className="px-5 py-[10px] rounded-md bg-[#e0e0e0] text-gray-600 border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5"
+            aria-label="View public troubleshooting site"
           >
             View Site
           </button>
           <button
             onClick={handleLogout}
             className="px-5 py-[10px] rounded-md bg-[#e0e0e0] text-gray-600 border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5"
+            aria-label="Logout of admin panel"
           >
             Logout
           </button>
@@ -216,18 +230,21 @@ export default function IssuesListPage() {
             <button
               onClick={() => setShowImportModal(true)}
               className="px-5 py-[10px] rounded-md bg-[#10b981] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
+              aria-label="Import issues from JSON file"
             >
               📥 Import
             </button>
             <button
               onClick={handleExportAll}
               className="px-5 py-[10px] rounded-md bg-[#3b82f6] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
+              aria-label="Export all issues to JSON"
             >
               📤 Export All
             </button>
             <button
               onClick={handleCreateNew}
               className="px-5 py-[10px] rounded-md bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
+              aria-label="Create a new troubleshooting issue"
             >
               + Create New Issue
             </button>
@@ -288,6 +305,15 @@ export default function IssuesListPage() {
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}
         onSuccess={handleImportComplete}
+      />
+
+      {/* Accessible confirm dialog (replaces confirm()) */}
+      <AccessibleConfirm
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
       />
     </div>
   );

@@ -72,8 +72,7 @@ impl RateLimiter {
         Ok(())
     }
 
-    /// Clean up old entries (should be called periodically)
-    #[allow(dead_code)]
+    /// Clean up old entries (called periodically by background task)
     pub async fn cleanup(&self) {
         let mut entries = self.entries.lock().await;
         let now = Instant::now();

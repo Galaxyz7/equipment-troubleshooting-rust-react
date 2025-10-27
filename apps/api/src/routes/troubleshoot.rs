@@ -1,5 +1,5 @@
 use crate::error::{ApiError, ApiResult};
-use crate::models::{Answer, Question, Node, Connection, NodeType};
+use crate::models::{Node, Connection, NodeType};
 use crate::AppState;
 use axum::{
     extract::{Path, State},
@@ -60,8 +60,8 @@ pub struct SubmitAnswerResponse {
 #[derive(Debug, Serialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct HistoryStep {
-    pub question: Question,
-    pub answer: Answer,
+    pub node: Node,
+    pub connection: Connection,
 }
 
 /// Response containing session history
@@ -107,36 +107,33 @@ pub async fn start_session(
         .ok_or_else(|| ApiError::internal("Global start node not found. Please run ensure_global_start.sql"))?
     };
 
-    // Get connections from root node
-    let connections = sqlx::query_as::<_, Connection>(
-        "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
-         FROM connections
-         WHERE from_node_id = $1 AND is_active = true
-         ORDER BY order_index ASC"
+    // PERFORMANCE: Get connections with their target nodes in a single JOIN query (avoids N+1)
+    let options = sqlx::query!(
+        r#"
+        SELECT
+            c.id as connection_id,
+            c.label,
+            n.category as target_category,
+            n.display_category
+        FROM connections c
+        INNER JOIN nodes n ON c.to_node_id = n.id
+        WHERE c.from_node_id = $1
+          AND c.is_active = true
+          AND n.is_active = true
+        ORDER BY c.order_index ASC
+        "#,
+        root_node.id
     )
-    .bind(root_node.id)
     .fetch_all(&state.db)
-    .await?;
-
-    // For each connection, get the target node to build options
-    let mut options = Vec::new();
-    for conn in connections {
-        let target_node = sqlx::query_as::<_, Node>(
-            "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
-             FROM nodes
-             WHERE id = $1"
-        )
-        .bind(conn.to_node_id)
-        .fetch_one(&state.db)
-        .await?;
-
-        options.push(NavigationOption {
-            connection_id: conn.id,
-            label: conn.label,
-            target_category: target_node.category,
-            display_category: target_node.display_category.clone(),
-        });
-    }
+    .await?
+    .into_iter()
+    .map(|row| NavigationOption {
+        connection_id: row.connection_id,
+        label: row.label,
+        target_category: row.target_category,
+        display_category: row.display_category,
+    })
+    .collect::<Vec<_>>();
 
     // Generate session ID
     let session_id = Uuid::new_v4().to_string();
@@ -200,36 +197,89 @@ pub async fn submit_answer(
         return Err(ApiError::bad_request("Session is already completed"));
     }
 
-    // Get the connection
-    let connection = sqlx::query_as::<_, Connection>(
-        "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
-         FROM connections
-         WHERE id = $1 AND is_active = true"
+    // PERFORMANCE OPTIMIZATION: Get connection and both nodes in a single JOIN query
+    let result = sqlx::query!(
+        r#"
+        SELECT
+            c.id as connection_id,
+            c.from_node_id,
+            c.to_node_id,
+            c.label as connection_label,
+            c.order_index,
+            c.created_at as connection_created_at,
+            c.updated_at as connection_updated_at,
+            fn.id as from_id,
+            fn.category as from_category,
+            fn.node_type as "from_node_type: NodeType",
+            fn.text as from_text,
+            fn.semantic_id as from_semantic_id,
+            fn.display_category as from_display_category,
+            fn.position_x as from_position_x,
+            fn.position_y as from_position_y,
+            fn.is_active as from_is_active,
+            fn.created_at as from_created_at,
+            fn.updated_at as from_updated_at,
+            tn.id as to_id,
+            tn.category as to_category,
+            tn.node_type as "to_node_type: NodeType",
+            tn.text as to_text,
+            tn.semantic_id as to_semantic_id,
+            tn.display_category as to_display_category,
+            tn.position_x as to_position_x,
+            tn.position_y as to_position_y,
+            tn.is_active as to_is_active,
+            tn.created_at as to_created_at,
+            tn.updated_at as to_updated_at
+        FROM connections c
+        INNER JOIN nodes fn ON c.from_node_id = fn.id
+        INNER JOIN nodes tn ON c.to_node_id = tn.id
+        WHERE c.id = $1 AND c.is_active = true
+        "#,
+        req.connection_id
     )
-    .bind(req.connection_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| ApiError::not_found("Connection not found"))?;
 
-    // Get the from_node (current node)
-    let from_node = sqlx::query_as::<_, Node>(
-        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
-         FROM nodes
-         WHERE id = $1"
-    )
-    .bind(connection.from_node_id)
-    .fetch_one(&state.db)
-    .await?;
+    // Reconstruct the connection and nodes from the joined result
+    let connection = Connection {
+        id: result.connection_id,
+        from_node_id: result.from_node_id,
+        to_node_id: result.to_node_id,
+        label: result.connection_label,
+        order_index: result.order_index.unwrap_or(0),
+        is_active: true,
+        created_at: result.connection_created_at.unwrap_or_default(),
+        updated_at: result.connection_updated_at.unwrap_or_default(),
+    };
 
-    // Get the target node
-    let next_node = sqlx::query_as::<_, Node>(
-        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
-         FROM nodes
-         WHERE id = $1"
-    )
-    .bind(connection.to_node_id)
-    .fetch_one(&state.db)
-    .await?;
+    let from_node = Node {
+        id: result.from_id,
+        category: result.from_category,
+        node_type: result.from_node_type,
+        text: result.from_text,
+        semantic_id: result.from_semantic_id,
+        display_category: result.from_display_category,
+        position_x: result.from_position_x,
+        position_y: result.from_position_y,
+        is_active: result.from_is_active.unwrap_or(true),
+        created_at: result.from_created_at.unwrap_or_default(),
+        updated_at: result.from_updated_at.unwrap_or_default(),
+    };
+
+    let next_node = Node {
+        id: result.to_id,
+        category: result.to_category,
+        node_type: result.to_node_type,
+        text: result.to_text,
+        semantic_id: result.to_semantic_id,
+        display_category: result.to_display_category,
+        position_x: result.to_position_x,
+        position_y: result.to_position_y,
+        is_active: result.to_is_active.unwrap_or(true),
+        created_at: result.to_created_at.unwrap_or_default(),
+        updated_at: result.to_updated_at.unwrap_or_default(),
+    };
 
     // Update session steps
     let mut steps: Vec<serde_json::Value> = serde_json::from_value(session.steps.clone())
@@ -268,35 +318,33 @@ pub async fn submit_answer(
         }));
     }
 
-    // Get next connections (if question node)
-    let connections = sqlx::query_as::<_, Connection>(
-        "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
-         FROM connections
-         WHERE from_node_id = $1 AND is_active = true
-         ORDER BY order_index ASC"
+    // PERFORMANCE: Get connections with their target nodes in a single JOIN query (avoids N+1)
+    let options = sqlx::query!(
+        r#"
+        SELECT
+            c.id as connection_id,
+            c.label,
+            n.category as target_category,
+            n.display_category
+        FROM connections c
+        INNER JOIN nodes n ON c.to_node_id = n.id
+        WHERE c.from_node_id = $1
+          AND c.is_active = true
+          AND n.is_active = true
+        ORDER BY c.order_index ASC
+        "#,
+        next_node.id
     )
-    .bind(next_node.id)
     .fetch_all(&state.db)
-    .await?;
-
-    let mut options = Vec::new();
-    for conn in connections {
-        let target_node = sqlx::query_as::<_, Node>(
-            "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
-             FROM nodes
-             WHERE id = $1"
-        )
-        .bind(conn.to_node_id)
-        .fetch_one(&state.db)
-        .await?;
-
-        options.push(NavigationOption {
-            connection_id: conn.id,
-            label: conn.label,
-            target_category: target_node.category,
-            display_category: target_node.display_category.clone(),
-        });
-    }
+    .await?
+    .into_iter()
+    .map(|row| NavigationOption {
+        connection_id: row.connection_id,
+        label: row.label,
+        target_category: row.target_category,
+        display_category: row.display_category,
+    })
+    .collect::<Vec<_>>();
 
     // Update session
     sqlx::query(
@@ -345,34 +393,33 @@ pub async fn get_session(
         .fetch_one(&state.db)
         .await?;
 
-        let connections = sqlx::query_as::<_, Connection>(
-            "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
-             FROM connections
-             WHERE from_node_id = $1 AND is_active = true
-             ORDER BY order_index ASC"
+        // PERFORMANCE: Get connections with their target nodes in a single JOIN query (avoids N+1)
+        let options = sqlx::query!(
+            r#"
+            SELECT
+                c.id as connection_id,
+                c.label,
+                n.category as target_category,
+                n.display_category
+            FROM connections c
+            INNER JOIN nodes n ON c.to_node_id = n.id
+            WHERE c.from_node_id = $1
+              AND c.is_active = true
+              AND n.is_active = true
+            ORDER BY c.order_index ASC
+            "#,
+            root_node.id
         )
-        .bind(root_node.id)
         .fetch_all(&state.db)
-        .await?;
-
-        let mut options = Vec::new();
-        for conn in connections {
-            let target_node = sqlx::query_as::<_, Node>(
-                "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
-                 FROM nodes
-                 WHERE id = $1"
-            )
-            .bind(conn.to_node_id)
-            .fetch_one(&state.db)
-            .await?;
-
-            options.push(NavigationOption {
-                connection_id: conn.id,
-                label: conn.label,
-                target_category: target_node.category,
-                display_category: target_node.display_category.clone(),
-            });
-        }
+        .await?
+        .into_iter()
+        .map(|row| NavigationOption {
+            connection_id: row.connection_id,
+            label: row.label,
+            target_category: row.target_category,
+            display_category: row.display_category,
+        })
+        .collect::<Vec<_>>();
 
         return Ok(Json(SubmitAnswerResponse {
             session_id,
@@ -418,35 +465,33 @@ pub async fn get_session(
         }));
     }
 
-    // Get connections from current node
-    let connections = sqlx::query_as::<_, Connection>(
-        "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
-         FROM connections
-         WHERE from_node_id = $1 AND is_active = true
-         ORDER BY order_index ASC"
+    // PERFORMANCE: Get connections with their target nodes in a single JOIN query (avoids N+1)
+    let options = sqlx::query!(
+        r#"
+        SELECT
+            c.id as connection_id,
+            c.label,
+            n.category as target_category,
+            n.display_category
+        FROM connections c
+        INNER JOIN nodes n ON c.to_node_id = n.id
+        WHERE c.from_node_id = $1
+          AND c.is_active = true
+          AND n.is_active = true
+        ORDER BY c.order_index ASC
+        "#,
+        current_node.id
     )
-    .bind(current_node.id)
     .fetch_all(&state.db)
-    .await?;
-
-    let mut options = Vec::new();
-    for conn in connections {
-        let target_node = sqlx::query_as::<_, Node>(
-            "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
-             FROM nodes
-             WHERE id = $1"
-        )
-        .bind(conn.to_node_id)
-        .fetch_one(&state.db)
-        .await?;
-
-        options.push(NavigationOption {
-            connection_id: conn.id,
-            label: conn.label,
-            target_category: target_node.category,
-            display_category: target_node.display_category.clone(),
-        });
-    }
+    .await?
+    .into_iter()
+    .map(|row| NavigationOption {
+        connection_id: row.connection_id,
+        label: row.label,
+        target_category: row.target_category,
+        display_category: row.display_category,
+    })
+    .collect::<Vec<_>>();
 
     Ok(Json(SubmitAnswerResponse {
         session_id,
@@ -476,34 +521,66 @@ pub async fn get_session_history(
     let steps: Vec<serde_json::Value> = serde_json::from_value(session.steps)
         .unwrap_or_default();
 
-    // Build history with full question and answer details
-    let mut history = Vec::new();
+    // PERFORMANCE: Batch fetch all questions and answers to avoid N+1 queries (2 queries per step)
+    // Extract all unique IDs from steps
+    let question_ids: Vec<Uuid> = steps
+        .iter()
+        .filter_map(|step| serde_json::from_value(step["question_id"].clone()).ok())
+        .collect();
+    let answer_ids: Vec<Uuid> = steps
+        .iter()
+        .filter_map(|step| serde_json::from_value(step["answer_id"].clone()).ok())
+        .collect();
 
+    // Batch fetch all nodes in a single query
+    let nodes = sqlx::query_as::<_, Node>(
+        "SELECT id, category, node_type, text, semantic_id, display_category, position_x, position_y, is_active, created_at, updated_at
+         FROM nodes
+         WHERE id = ANY($1)"
+    )
+    .bind(&question_ids)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Batch fetch all connections in a single query
+    let connections = sqlx::query_as::<_, Connection>(
+        "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
+         FROM connections
+         WHERE id = ANY($1)"
+    )
+    .bind(&answer_ids)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Build HashMaps for O(1) lookups
+    use std::collections::HashMap;
+    let node_map: HashMap<Uuid, Node> = nodes
+        .into_iter()
+        .map(|n| (n.id, n))
+        .collect();
+    let connection_map: HashMap<Uuid, Connection> = connections
+        .into_iter()
+        .map(|c| (c.id, c))
+        .collect();
+
+    // Build history using the HashMaps
+    let mut history = Vec::new();
     for step in steps {
         let question_id: Uuid = serde_json::from_value(step["question_id"].clone())
             .map_err(|_| ApiError::internal("Invalid session data"))?;
         let answer_id: Uuid = serde_json::from_value(step["answer_id"].clone())
             .map_err(|_| ApiError::internal("Invalid session data"))?;
 
-        let question = sqlx::query_as::<_, Question>(
-            "SELECT id, semantic_id, text, category, is_active, created_at, updated_at
-             FROM questions
-             WHERE id = $1",
-        )
-        .bind(question_id)
-        .fetch_one(&state.db)
-        .await?;
+        let node = node_map
+            .get(&question_id)
+            .ok_or_else(|| ApiError::internal("Node not found in batch"))?
+            .clone();
+        let connection = connection_map
+            .get(&answer_id)
+            .ok_or_else(|| ApiError::internal("Connection not found in batch"))?
+            .clone();
 
-        let answer = sqlx::query_as::<_, Answer>(
-            "SELECT id, question_id, label, next_question_id, conclusion_text, order_index, is_active, created_at, updated_at
-             FROM answers
-             WHERE id = $1",
-        )
-        .bind(answer_id)
-        .fetch_one(&state.db)
-        .await?;
-
-        history.push(HistoryStep { question, answer });
+        history.push(HistoryStep { node, connection });
     }
 
     Ok(Json(SessionHistoryResponse {

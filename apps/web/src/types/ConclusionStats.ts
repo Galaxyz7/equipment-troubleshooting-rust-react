@@ -3,4 +3,4 @@
 /**
  * Statistics for a specific conclusion
  */
-export type ConclusionStats = { conclusion: string, count: bigint, };
+export type ConclusionStats = { conclusion: string, count: number, };

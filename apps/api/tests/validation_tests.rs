@@ -16,6 +16,7 @@ async fn test_login_request_valid() {
     let request = LoginRequest {
         email: "admin@example.com".to_string(),
         password: "password123".to_string(),
+        remember_me: false,
     };
 
     assert_eq!(request.email, "admin@example.com");
@@ -27,6 +28,7 @@ async fn test_login_request_empty_fields() {
     let request = LoginRequest {
         email: "".to_string(),
         password: "".to_string(),
+        remember_me: false,
     };
 
     // Empty fields should be caught by validation

@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { adminAPI } from '../lib/api';
+import { AccessibleConfirm } from './AccessibleConfirm';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 interface CategoryManagementModalProps {
   isOpen: boolean;
@@ -7,12 +10,20 @@ interface CategoryManagementModalProps {
   onSuccess: (message: string) => void;
 }
 
-export default function CategoryManagementModal({ isOpen, onClose, onSuccess }: CategoryManagementModalProps) {
+const CategoryManagementModal = memo(function CategoryManagementModal({ isOpen, onClose, onSuccess }: CategoryManagementModalProps) {
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+
+  // Accessible confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   useEffect(() => {
     if (isOpen) {
@@ -26,9 +37,9 @@ export default function CategoryManagementModal({ isOpen, onClose, onSuccess }: 
     try {
       const data = await adminAPI.getCategories();
       setCategories(data.categories);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setError('Failed to load categories');
-      console.error('Error loading categories:', err);
+      logger.error('Failed to load categories for management modal', { error: getErrorMessage(err) });
     } finally {
       setLoading(false);
     }
@@ -48,31 +59,34 @@ export default function CategoryManagementModal({ isOpen, onClose, onSuccess }: 
       setEditingCategory(null);
       setNewName('');
       await loadCategories();
-    } catch (err: any) {
-      setError(`Failed to rename category: ${err.message}`);
-      console.error('Error renaming category:', err);
+    } catch (err: unknown) {
+      setError(`Failed to rename category: ${getErrorMessage(err)}`);
+      logger.error('Failed to rename category', { oldName, newName: newName.trim(), error: getErrorMessage(err) });
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (name: string) => {
-    if (!confirm(`Are you sure you want to delete the "${name}" category?\n\nThis will clear the category from all issues using it (they will become uncategorized).`)) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await adminAPI.deleteCategory(name);
-      onSuccess(`Category "${name}" deleted. ${result.updated_count} issue(s) cleared.`);
-      await loadCategories();
-    } catch (err: any) {
-      setError(`Failed to delete category: ${err.message}`);
-      console.error('Error deleting category:', err);
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Category',
+      message: `Are you sure you want to delete the "${name}" category?\n\nThis will clear the category from all issues using it (they will become uncategorized).`,
+      onConfirm: async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const result = await adminAPI.deleteCategory(name);
+          onSuccess(`Category "${name}" deleted. ${result.updated_count} issue(s) cleared.`);
+          await loadCategories();
+        } catch (err: unknown) {
+          setError(`Failed to delete category: ${getErrorMessage(err)}`);
+          logger.error('Failed to delete category', { categoryName: name, error: getErrorMessage(err) });
+        } finally {
+          setLoading(false);
+        }
+      },
+    });
   };
 
   if (!isOpen) return null;
@@ -185,11 +199,24 @@ export default function CategoryManagementModal({ isOpen, onClose, onSuccess }: 
             onClick={onClose}
             disabled={loading}
             className="w-full px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            aria-label="Close category management dialog"
           >
             Close
           </button>
         </div>
       </div>
+
+      {/* Accessible confirm dialog (replaces confirm()) */}
+      <AccessibleConfirm
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        variant="danger"
+      />
     </div>
   );
-}
+});
+
+export default CategoryManagementModal;

@@ -4,6 +4,7 @@ import { adminAPI } from '../lib/api';
 import type { DashboardStats, CategoryStats, ConclusionStats } from '../types/troubleshoot';
 import DataManagementModal from '../components/DataManagementModal';
 import CategoryManagementModal from '../components/CategoryManagementModal';
+import { getErrorMessage } from '../lib/errorUtils';
 
 export default function AnalyticsPage() {
   const navigate = useNavigate();
@@ -23,8 +24,8 @@ export default function AnalyticsPage() {
       const data = await adminAPI.getStats();
       setStats(data);
       setError('');
-    } catch (err: any) {
-      setError(err.response?.data?.error?.data?.message || 'Failed to load statistics');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to load statistics');
     } finally {
       setLoading(false);
     }
@@ -64,11 +65,11 @@ export default function AnalyticsPage() {
   }
 
   const completionRate = stats.total_sessions > 0
-    ? ((Number(stats.completed_sessions) / Number(stats.total_sessions)) * 100).toFixed(1)
+    ? ((stats.completed_sessions / stats.total_sessions) * 100).toFixed(1)
     : '0';
 
   const abandonmentRate = stats.total_sessions > 0
-    ? ((Number(stats.abandoned_sessions) / Number(stats.total_sessions)) * 100).toFixed(1)
+    ? ((stats.abandoned_sessions / stats.total_sessions) * 100).toFixed(1)
     : '0';
 
   return (
@@ -81,6 +82,7 @@ export default function AnalyticsPage() {
               <button
                 onClick={() => navigate('/admin')}
                 className="text-purple-600 hover:text-purple-700 mb-2 inline-flex items-center text-sm"
+                aria-label="Go back to issues management page"
               >
                 ← Back to Issues
               </button>
@@ -91,6 +93,7 @@ export default function AnalyticsPage() {
               <button
                 onClick={() => setShowCategoryManagement(true)}
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium inline-flex items-center"
+                aria-label="Open category management to rename or delete categories"
               >
                 <span className="mr-2">🏷️</span>
                 Manage Categories
@@ -98,6 +101,7 @@ export default function AnalyticsPage() {
               <button
                 onClick={() => setShowDataManagement(true)}
                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium inline-flex items-center"
+                aria-label="Open data management to delete session data"
               >
                 <span className="mr-2">🗑️</span>
                 Data Management
@@ -121,21 +125,21 @@ export default function AnalyticsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatCard
             title="Total Sessions"
-            value={Number(stats.total_sessions).toLocaleString()}
+            value={stats.total_sessions.toLocaleString()}
             icon="📊"
             color="blue"
             subtitle="All time"
           />
           <StatCard
             title="Completed"
-            value={Number(stats.completed_sessions).toLocaleString()}
+            value={stats.completed_sessions.toLocaleString()}
             icon="✅"
             color="green"
             subtitle={`${completionRate}% completion rate`}
           />
           <StatCard
             title="Abandoned"
-            value={Number(stats.abandoned_sessions).toLocaleString()}
+            value={stats.abandoned_sessions.toLocaleString()}
             icon="⚠️"
             color="yellow"
             subtitle={`${abandonmentRate}% abandoned`}
@@ -160,7 +164,7 @@ export default function AnalyticsPage() {
                   <ConclusionBar
                     key={index}
                     conclusion={conclusion}
-                    maxCount={Number(stats.most_common_conclusions[0].count)}
+                    maxCount={stats.most_common_conclusions[0].count}
                     rank={index + 1}
                   />
                 ))}
@@ -179,7 +183,7 @@ export default function AnalyticsPage() {
                   <CategoryBar
                     key={index}
                     category={category}
-                    maxCount={Number(stats.sessions_by_category[0].count)}
+                    maxCount={stats.sessions_by_category[0].count}
                     rank={index + 1}
                   />
                 ))}
@@ -197,10 +201,10 @@ export default function AnalyticsPage() {
               <div className="text-4xl mr-4">🔄</div>
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">
-                  {Number(stats.active_sessions)} Active Session{stats.active_sessions !== 1n ? 's' : ''}
+                  {stats.active_sessions} Active Session{stats.active_sessions !== 1 ? 's' : ''}
                 </h3>
                 <p className="text-gray-600">
-                  Session{stats.active_sessions !== 1n ? 's' : ''} in progress (not completed or abandoned)
+                  Session{stats.active_sessions !== 1 ? 's' : ''} in progress (not completed or abandoned)
                 </p>
               </div>
             </div>
@@ -267,7 +271,7 @@ interface ConclusionBarProps {
 }
 
 function ConclusionBar({ conclusion, maxCount, rank }: ConclusionBarProps) {
-  const percentage = (Number(conclusion.count) / maxCount) * 100;
+  const percentage = (conclusion.count / maxCount) * 100;
 
   return (
     <div className="group">
@@ -278,7 +282,7 @@ function ConclusionBar({ conclusion, maxCount, rank }: ConclusionBarProps) {
           </span>
           {conclusion.conclusion}
         </span>
-        <span className="text-gray-500">{Number(conclusion.count)}</span>
+        <span className="text-gray-500">{conclusion.count}</span>
       </div>
       <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
         <div
@@ -298,7 +302,7 @@ interface CategoryBarProps {
 }
 
 function CategoryBar({ category, maxCount, rank }: CategoryBarProps) {
-  const percentage = (Number(category.count) / maxCount) * 100;
+  const percentage = (category.count / maxCount) * 100;
 
   return (
     <div className="group">
@@ -309,7 +313,7 @@ function CategoryBar({ category, maxCount, rank }: CategoryBarProps) {
           </span>
           {category.category}
         </span>
-        <span className="text-gray-500">{Number(category.count)}</span>
+        <span className="text-gray-500">{category.count}</span>
       </div>
       <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
         <div

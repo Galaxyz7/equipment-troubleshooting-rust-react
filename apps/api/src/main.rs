@@ -28,6 +28,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tower_http::cors::CorsLayer;
+use axum::http::{Method, header};
 use std::path::{Path, PathBuf};
 use std::fs;
 
@@ -38,10 +39,47 @@ async fn spa_fallback_handler(uri: Uri) -> Response {
 
     let path = uri.path();
 
-    // Try to serve the file if it exists
-    let file_path = format!("{}{}", static_files_path, path);
+    // SECURITY: Prevent path traversal attacks
+    // Canonicalize base path to get absolute path
+    let base_path = match fs::canonicalize(&static_files_path) {
+        Ok(p) => p,
+        Err(_) => {
+            tracing::warn!("Static files path does not exist: {}", static_files_path);
+            return (StatusCode::NOT_FOUND, "Frontend not built").into_response();
+        }
+    };
 
-    match tokio::fs::read_to_string(&file_path).await {
+    // Build requested file path - remove leading slash to avoid absolute path interpretation
+    let requested_file = path.trim_start_matches('/');
+    let file_path = base_path.join(requested_file);
+
+    // Canonicalize the requested path and verify it's within base_path
+    // If the file doesn't exist yet, check if parent directory is within base_path
+    let safe_path = match fs::canonicalize(&file_path) {
+        Ok(canonical) => {
+            // File exists - verify it's within base directory
+            if !canonical.starts_with(&base_path) {
+                tracing::warn!("Path traversal attempt blocked: {:?}", path);
+                return (StatusCode::FORBIDDEN, "Access denied").into_response();
+            }
+            canonical
+        }
+        Err(_) => {
+            // File doesn't exist - verify parent directory is within base_path
+            if let Some(parent) = file_path.parent() {
+                if let Ok(canonical_parent) = fs::canonicalize(parent) {
+                    if !canonical_parent.starts_with(&base_path) {
+                        tracing::warn!("Path traversal attempt blocked: {:?}", path);
+                        return (StatusCode::FORBIDDEN, "Access denied").into_response();
+                    }
+                }
+                // Parent doesn't exist, will fall through to index.html
+            }
+            file_path.clone()
+        }
+    };
+
+    match tokio::fs::read_to_string(&safe_path).await {
         Ok(contents) => {
             // Determine content type based on file extension
             let content_type = if path.ends_with(".html") {
@@ -53,7 +91,7 @@ async fn spa_fallback_handler(uri: Uri) -> Response {
             } else if path.ends_with(".json") {
                 "application/json"
             } else if path.ends_with(".png") || path.ends_with(".jpg") || path.ends_with(".jpeg") {
-                return (StatusCode::OK, tokio::fs::read(&file_path).await.unwrap()).into_response();
+                return (StatusCode::OK, tokio::fs::read(&safe_path).await.unwrap()).into_response();
             } else if path.ends_with(".svg") {
                 "image/svg+xml"
             } else {
@@ -64,7 +102,7 @@ async fn spa_fallback_handler(uri: Uri) -> Response {
         }
         Err(_) => {
             // File doesn't exist, serve index.html for SPA routing
-            let index_path = format!("{}/index.html", static_files_path);
+            let index_path = base_path.join("index.html");
             match tokio::fs::read_to_string(&index_path).await {
                 Ok(contents) => Html(contents).into_response(),
                 Err(_) => (StatusCode::NOT_FOUND, "Frontend not built").into_response(),
@@ -80,6 +118,13 @@ async fn main() {
 
     // Load environment variables
     dotenvy::dotenv().ok();
+
+    // Get frontend URL for CORS configuration
+    let frontend_url = std::env::var("FRONTEND_URL")
+        .unwrap_or_else(|_| {
+            tracing::warn!("⚠️  FRONTEND_URL not set, defaulting to http://localhost:5173");
+            "http://localhost:5173".to_string()
+        });
 
     // Validate JWT_SECRET is set (critical security requirement)
     let jwt_secret = std::env::var("JWT_SECRET")
@@ -130,54 +175,61 @@ async fn main() {
     let rate_limiter = Arc::new(RateLimiter::new(100, 60));
     tracing::info!("🚦 Rate limiter initialized (100 requests/60 seconds)");
 
+    // Spawn background task to clean up old rate limit entries every 5 minutes
+    // This prevents memory leak by removing expired entries from the HashMap
+    {
+        let rate_limiter_cleanup = Arc::clone(&rate_limiter);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+            loop {
+                interval.tick().await;
+                rate_limiter_cleanup.cleanup().await;
+                tracing::debug!("🧹 Rate limiter cleanup completed");
+            }
+        });
+        tracing::info!("🧹 Rate limiter cleanup task started (runs every 5 minutes)");
+    }
+
     // Build protected routes (require authentication)
     let protected_routes = Router::new()
-        .route("/api/auth/me", get(routes::auth::me))
+        .route("/api/v1/auth/me", get(routes::auth::me))
         .layer(axum_middleware::from_fn(auth_middleware));
 
     // Build admin-only routes (require ADMIN role)
     let admin_routes = Router::new()
-        .route("/api/questions", post(routes::questions::create_question))
-        .route("/api/questions/:id", put(routes::questions::update_question))
-        .route("/api/questions/:id", delete(routes::questions::delete_question))
-        .route("/api/questions/:question_id/answers", post(routes::answers::create_answer))
-        .route("/api/answers/:id", put(routes::answers::update_answer))
-        .route("/api/answers/:id", delete(routes::answers::delete_answer))
         // Admin dashboard routes
-        .route("/api/admin/sessions", get(routes::admin::list_sessions))
-        .route("/api/admin/sessions", delete(routes::admin::delete_sessions))
-        .route("/api/admin/sessions/count", get(routes::admin::count_sessions))
-        .route("/api/admin/stats", get(routes::admin::get_stats))
-        .route("/api/admin/audit-logs", get(routes::admin::get_audit_logs))
-        .route("/api/admin/performance", get(routes::admin::get_performance_metrics))
+        .route("/api/v1/admin/sessions", get(routes::admin::list_sessions))
+        .route("/api/v1/admin/sessions", delete(routes::admin::delete_sessions))
+        .route("/api/v1/admin/sessions/count", get(routes::admin::count_sessions))
+        .route("/api/v1/admin/stats", get(routes::admin::get_stats))
+        .route("/api/v1/admin/audit-logs", get(routes::admin::get_audit_logs))
+        .route("/api/v1/admin/performance", get(routes::admin::get_performance_metrics))
         // Category management routes
-        .route("/api/admin/categories", get(routes::admin::list_categories))
-        .route("/api/admin/categories/:old_name", put(routes::admin::rename_category))
-        .route("/api/admin/categories/:name", delete(routes::admin::delete_category))
+        .route("/api/v1/admin/categories", get(routes::admin::list_categories))
+        .route("/api/v1/admin/categories/:name", put(routes::admin::rename_category).delete(routes::admin::delete_category))
         // Issues management routes
-        .route("/api/admin/issues", get(routes::issues::list_issues))
-        .route("/api/admin/issues", post(routes::issues::create_issue))
+        .route("/api/v1/admin/issues", get(routes::issues::list_issues))
+        .route("/api/v1/admin/issues", post(routes::issues::create_issue))
         // Import/Export routes (must come before /:category routes to avoid conflicts)
-        .route("/api/admin/issues/export-all", get(routes::issues::export_all_issues))
-        .route("/api/admin/issues/import", post(routes::issues::import_issues))
-        .route("/api/admin/issues/:category/tree", get(routes::issues::get_issue_tree))
-        .route("/api/admin/issues/:category/graph", get(routes::issues::get_issue_graph))
-        .route("/api/admin/issues/:category/export", get(routes::issues::export_issue))
-        .route("/api/admin/issues/:category", put(routes::issues::update_issue))
-        .route("/api/admin/issues/:category", delete(routes::issues::delete_issue))
-        .route("/api/admin/issues/:category/toggle", patch(routes::issues::toggle_issue))
+        .route("/api/v1/admin/issues/export-all", get(routes::issues::export_all_issues))
+        .route("/api/v1/admin/issues/import", post(routes::issues::import_issues))
+        .route("/api/v1/admin/issues/:category/graph", get(routes::issues::get_issue_graph))
+        .route("/api/v1/admin/issues/:category/export", get(routes::issues::export_issue))
+        .route("/api/v1/admin/issues/:category", put(routes::issues::update_issue))
+        .route("/api/v1/admin/issues/:category", delete(routes::issues::delete_issue))
+        .route("/api/v1/admin/issues/:category/toggle", patch(routes::issues::toggle_issue))
         // Node routes (NODE-GRAPH)
-        .route("/api/nodes", get(routes::nodes::list_nodes))
-        .route("/api/nodes/:id", get(routes::nodes::get_node))
-        .route("/api/nodes/:id/with-connections", get(routes::nodes::get_node_with_connections))
-        .route("/api/nodes", post(routes::nodes::create_node))
-        .route("/api/nodes/:id", put(routes::nodes::update_node))
-        .route("/api/nodes/:id", delete(routes::nodes::delete_node))
+        .route("/api/v1/nodes", get(routes::nodes::list_nodes))
+        .route("/api/v1/nodes/:id", get(routes::nodes::get_node))
+        .route("/api/v1/nodes/:id/with-connections", get(routes::nodes::get_node_with_connections))
+        .route("/api/v1/nodes", post(routes::nodes::create_node))
+        .route("/api/v1/nodes/:id", put(routes::nodes::update_node))
+        .route("/api/v1/nodes/:id", delete(routes::nodes::delete_node))
         // Connection routes (NODE-GRAPH)
-        .route("/api/connections", get(routes::connections::list_connections))
-        .route("/api/connections", post(routes::connections::create_connection))
-        .route("/api/connections/:id", put(routes::connections::update_connection))
-        .route("/api/connections/:id", delete(routes::connections::delete_connection))
+        .route("/api/v1/connections", get(routes::connections::list_connections))
+        .route("/api/v1/connections", post(routes::connections::create_connection))
+        .route("/api/v1/connections/:id", put(routes::connections::update_connection))
+        .route("/api/v1/connections/:id", delete(routes::connections::delete_connection))
         .layer(axum_middleware::from_fn(middleware::auth::require_admin));
 
     // Get static files path from environment or use default
@@ -189,7 +241,7 @@ async fn main() {
     // Build router
     let app = Router::new()
         .route("/health", get(health_check))
-        .route("/api/health", get(health_check_db))
+        .route("/api/v1/health", get(health_check_db))
         // OpenAPI/Swagger documentation with enhanced configuration
         .merge(
             SwaggerUi::new("/swagger-ui")
@@ -203,31 +255,47 @@ async fn main() {
                 )
         )
         // Authentication routes (public)
-        .route("/api/auth/login", post(routes::auth::login))
-        .route("/api/auth/refresh", post(routes::auth::refresh))
-        // Questions routes (public read)
-        .route("/api/questions", get(routes::questions::list_questions))
-        .route("/api/questions/:id", get(routes::questions::get_question))
-        // Answers routes (public read)
-        .route("/api/questions/:question_id/answers", get(routes::answers::list_answers))
+        .route("/api/v1/auth/login", post(routes::auth::login))
+        .route("/api/v1/auth/refresh", post(routes::auth::refresh))
         // Troubleshooting routes (public)
-        .route("/api/troubleshoot/start", post(routes::troubleshoot::start_session))
-        .route("/api/troubleshoot/:session_id", get(routes::troubleshoot::get_session))
-        .route("/api/troubleshoot/:session_id/answer", post(routes::troubleshoot::submit_answer))
-        .route("/api/troubleshoot/:session_id/history", get(routes::troubleshoot::get_session_history))
+        .route("/api/v1/troubleshoot/start", post(routes::troubleshoot::start_session))
+        .route("/api/v1/troubleshoot/:session_id", get(routes::troubleshoot::get_session))
+        .route("/api/v1/troubleshoot/:session_id/answer", post(routes::troubleshoot::submit_answer))
+        .route("/api/v1/troubleshoot/:session_id/history", get(routes::troubleshoot::get_session_history))
         // Merge protected routes
         .merge(protected_routes)
         // Merge admin routes
         .merge(admin_routes)
         // Demo error endpoints
-        .route("/api/demo/not-found", get(demo_not_found))
-        .route("/api/demo/unauthorized", get(demo_unauthorized))
-        .route("/api/demo/validation", get(demo_validation))
+        .route("/api/v1/demo/not-found", get(demo_not_found))
+        .route("/api/v1/demo/unauthorized", get(demo_unauthorized))
+        .route("/api/v1/demo/validation", get(demo_validation))
         .layer(axum_middleware::from_fn(performance_monitoring_middleware))
         .layer(axum_middleware::from_fn(security_headers_middleware))
         .layer(axum_middleware::from_fn(rate_limit_middleware))
         .layer(axum::Extension(RateLimiterExtension(rate_limiter)))
-        .layer(CorsLayer::permissive())
+        // SECURITY: Configure CORS to only allow specific origins instead of permissive
+        .layer(
+            CorsLayer::new()
+                .allow_origin(frontend_url.parse::<axum::http::HeaderValue>()
+                    .unwrap_or_else(|_| {
+                        tracing::error!("Invalid FRONTEND_URL: {}", frontend_url);
+                        "http://localhost:5173".parse().unwrap()
+                    }))
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::PATCH,
+                    Method::DELETE,
+                    Method::OPTIONS,
+                ])
+                .allow_headers([
+                    header::CONTENT_TYPE,
+                    header::AUTHORIZATION,
+                ])
+                .allow_credentials(true)
+        )
         .with_state(state)
         // Serve static files for SPA (fallback to index.html for client-side routing)
         .fallback(spa_fallback_handler);
@@ -250,7 +318,6 @@ async fn main() {
     tracing::info!("🚀 Equipment Troubleshooting System");
 
     // Check if HTTPS is requested via environment variables
-    let frontend_url = std::env::var("FRONTEND_URL").unwrap_or_default();
     let use_https = frontend_url.starts_with("https://");
 
     // Function to find first .crt and .key files in a directory

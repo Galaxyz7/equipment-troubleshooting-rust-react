@@ -1,11 +1,15 @@
 use crate::error::{ApiError, ApiResult};
+use crate::middleware::auth::AuthUser;
 use crate::models::{Connection, CreateConnection, UpdateConnection};
+use crate::utils::audit;
 use crate::AppState;
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    http::HeaderMap,
+    Extension, Json,
 };
 use serde::Deserialize;
+use serde_json::json;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -20,30 +24,30 @@ pub async fn list_connections(
     State(state): State<AppState>,
     Query(query): Query<ListConnectionsQuery>,
 ) -> ApiResult<Json<Vec<Connection>>> {
-    let mut sql = String::from(
+    // Build query safely using QueryBuilder to prevent SQL injection
+    use sqlx::QueryBuilder;
+    let mut query_builder = QueryBuilder::new(
         "SELECT id, from_node_id, to_node_id, label, order_index, is_active, created_at, updated_at
          FROM connections
          WHERE is_active = true"
     );
 
-    let mut conditions = Vec::new();
-
+    // From node filter - SAFE: uses parameterized query
     if let Some(from_id) = query.from_node_id {
-        conditions.push(format!("from_node_id = '{}'", from_id));
+        query_builder.push(" AND from_node_id = ");
+        query_builder.push_bind(from_id);
     }
 
+    // To node filter - SAFE: uses parameterized query
     if let Some(to_id) = query.to_node_id {
-        conditions.push(format!("to_node_id = '{}'", to_id));
+        query_builder.push(" AND to_node_id = ");
+        query_builder.push_bind(to_id);
     }
 
-    if !conditions.is_empty() {
-        sql.push_str(" AND ");
-        sql.push_str(&conditions.join(" AND "));
-    }
+    query_builder.push(" ORDER BY order_index ASC");
 
-    sql.push_str(" ORDER BY order_index ASC");
-
-    let connections = sqlx::query_as::<_, Connection>(&sql)
+    let connections = query_builder
+        .build_query_as::<Connection>()
         .fetch_all(&state.db)
         .await?;
 
@@ -54,6 +58,8 @@ pub async fn list_connections(
 /// Create new connection (ADMIN only)
 pub async fn create_connection(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Json(req): Json<CreateConnection>,
 ) -> ApiResult<Json<Connection>> {
     // Validate both nodes exist
@@ -109,11 +115,32 @@ pub async fn create_connection(
     .flatten();
 
     // Invalidate cache for the category
-    if let Some(category) = category {
+    if let Some(category) = &category {
         let cache_key = format!("graph_{}", category);
         state.issue_graph_cache.invalidate(&cache_key).await;
-        state.issue_tree_cache.invalidate(&category).await;
+        state.issue_tree_cache.invalidate(category).await;
     }
+
+    // Audit log the connection creation
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::ConnectionCreated,
+        "connection",
+        Some(&connection.id.to_string()),
+        Some(json!({
+            "from_node_id": connection.from_node_id,
+            "to_node_id": connection.to_node_id,
+            "label": &connection.label,
+            "category": category,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
 
     Ok(Json(connection))
 }
@@ -122,6 +149,8 @@ pub async fn create_connection(
 /// Update connection (ADMIN only)
 pub async fn update_connection(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateConnection>,
 ) -> ApiResult<Json<Connection>> {
@@ -179,16 +208,16 @@ pub async fn update_connection(
 
     let mut query_builder = sqlx::query_as::<_, Connection>(&query).bind(id);
 
-    if let Some(to_node_id) = req.to_node_id {
+    if let Some(ref to_node_id) = req.to_node_id {
         query_builder = query_builder.bind(to_node_id);
     }
-    if let Some(label) = req.label {
+    if let Some(ref label) = req.label {
         query_builder = query_builder.bind(label);
     }
-    if let Some(order_index) = req.order_index {
+    if let Some(ref order_index) = req.order_index {
         query_builder = query_builder.bind(order_index);
     }
-    if let Some(is_active) = req.is_active {
+    if let Some(ref is_active) = req.is_active {
         query_builder = query_builder.bind(is_active);
     }
 
@@ -204,11 +233,32 @@ pub async fn update_connection(
     .flatten();
 
     // Invalidate cache for the category
-    if let Some(category) = category {
+    if let Some(category) = &category {
         let cache_key = format!("graph_{}", category);
         state.issue_graph_cache.invalidate(&cache_key).await;
-        state.issue_tree_cache.invalidate(&category).await;
+        state.issue_tree_cache.invalidate(category).await;
     }
+
+    // Audit log the connection update
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::ConnectionUpdated,
+        "connection",
+        Some(&connection.id.to_string()),
+        Some(json!({
+            "from_node_id": connection.from_node_id,
+            "to_node_id": connection.to_node_id,
+            "updates": &req,
+            "category": category,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
 
     Ok(Json(connection))
 }
@@ -217,6 +267,8 @@ pub async fn update_connection(
 /// Hard delete connection (ADMIN only)
 pub async fn delete_connection(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Connection>> {
     // Fetch the connection first to return it and get category for cache invalidation
@@ -246,11 +298,32 @@ pub async fn delete_connection(
         .await?;
 
     // Invalidate cache for the category
-    if let Some(category) = category {
+    if let Some(category) = &category {
         let cache_key = format!("graph_{}", category);
         state.issue_graph_cache.invalidate(&cache_key).await;
-        state.issue_tree_cache.invalidate(&category).await;
+        state.issue_tree_cache.invalidate(category).await;
     }
+
+    // Audit log the connection deletion
+    let user_id = Uuid::parse_str(&auth.0.sub)
+        .map_err(|_| ApiError::internal("Invalid user ID in token"))?;
+    let ip = audit::extract_ip_address(&headers);
+
+    audit::log_event(
+        &state.db,
+        user_id,
+        audit::AuditAction::ConnectionDeleted,
+        "connection",
+        Some(&connection.id.to_string()),
+        Some(json!({
+            "from_node_id": connection.from_node_id,
+            "to_node_id": connection.to_node_id,
+            "label": &connection.label,
+            "category": category,
+        })),
+        ip.as_deref(),
+    )
+    .await?;
 
     Ok(Json(connection))
 }

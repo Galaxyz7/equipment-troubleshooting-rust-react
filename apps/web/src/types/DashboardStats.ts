@@ -5,4 +5,4 @@ import type { ConclusionStats } from "./ConclusionStats";
 /**
  * Dashboard statistics response
  */
-export type DashboardStats = { total_sessions: bigint, completed_sessions: bigint, abandoned_sessions: bigint, active_sessions: bigint, avg_steps_to_completion: number, most_common_conclusions: Array<ConclusionStats>, sessions_by_category: Array<CategoryStats>, };
+export type DashboardStats = { total_sessions: number, completed_sessions: number, abandoned_sessions: number, active_sessions: number, avg_steps_to_completion: number, most_common_conclusions: Array<ConclusionStats>, sessions_by_category: Array<CategoryStats>, };

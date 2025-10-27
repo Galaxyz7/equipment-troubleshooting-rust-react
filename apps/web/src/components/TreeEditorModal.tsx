@@ -8,11 +8,18 @@ import ReactFlow, {
   useEdgesState,
   Connection as FlowConnection,
   MarkerType,
+  NodeChange,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { issuesAPI, nodesAPI, connectionsAPI } from '../lib/api';
 import type { IssueGraph, UpdateNode, UpdateConnection } from '../types';
-import CategoryCombobox from './CategoryCombobox';
+import { AccessibleAlert } from './AccessibleAlert';
+import { AccessibleConfirm } from './AccessibleConfirm';
+import { NodeDetailsPanel } from './NodeDetailsPanel';
+import { ConnectionDetailsPanel } from './ConnectionDetailsPanel';
+import { IssueMetadataHeader } from './IssueMetadataHeader';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 interface TreeEditorModalProps {
   category: string;
@@ -44,6 +51,21 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
   const [editingDisplayCategory, setEditingDisplayCategory] = useState<string>('');
   const [hasUnsavedIssueChanges, setHasUnsavedIssueChanges] = useState(false);
   const [issueData, setIssueData] = useState<any>(null);
+
+  // Accessible dialog states (replaces alert/confirm)
+  const [alertDialog, setAlertDialog] = useState<{ isOpen: boolean; title: string; message: string; type?: 'success' | 'info' | 'error' }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info',
+  });
+  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void; variant?: 'default' | 'danger' }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    variant: 'default',
+  });
 
   // Get currently selected node
   const selectedNode = graphData?.nodes.find(n => n.id === selectedNodeId);
@@ -169,9 +191,9 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
       const data = await issuesAPI.getGraph(category);
       setGraphData(data);
       convertGraphToFlow(data);
-    } catch (err: any) {
-      setError(`Failed to load graph: ${err.message}`);
-      console.error('Error loading graph:', err);
+    } catch (err: unknown) {
+      setError(`Failed to load graph: ${getErrorMessage(err)}`);
+      logger.error('Failed to load graph data', { category, error: getErrorMessage(err) });
     } finally {
       setLoading(false);
     }
@@ -191,8 +213,8 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
       if (issue) {
         setIssueData(issue);
       }
-    } catch (err: any) {
-      console.error('Error loading issue data:', err);
+    } catch (err: unknown) {
+      logger.error('Failed to load issue data', { category, error: getErrorMessage(err) });
     }
   }, [category]);
 
@@ -223,7 +245,7 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
       setLoading(true);
       setError(null);
 
-      const updateData: any = {};
+      const updateData: { name?: string; display_category?: string | null } = {};
       if (editingIssueName !== (issueData?.name || issueName)) {
         updateData.name = editingIssueName;
       }
@@ -232,24 +254,29 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
       }
 
       if (Object.keys(updateData).length > 0) {
-        const updatedIssue = await issuesAPI.update(category, updateData);
+        const updatedIssue = await issuesAPI.update(category, updateData as any);
         setIssueData(updatedIssue);
         setHasUnsavedIssueChanges(false);
-        alert('Issue metadata saved successfully!');
+        setAlertDialog({
+          isOpen: true,
+          title: 'Success',
+          message: 'Issue metadata saved successfully!',
+          type: 'success',
+        });
       }
-    } catch (err: any) {
-      setError(`Failed to save issue metadata: ${err.message}`);
-      console.error('Error saving issue:', err);
+    } catch (err: unknown) {
+      setError(`Failed to save issue metadata: ${getErrorMessage(err)}`);
+      logger.error('Failed to save issue metadata', { category, error: getErrorMessage(err) });
     } finally {
       setLoading(false);
     }
   };
 
   // Track node position changes
-  const handleNodesChange = useCallback((changes: any) => {
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
     onFlowNodesChange(changes);
-    const hasPositionChange = changes.some((change: any) =>
-      change.type === 'position' && change.dragging === false
+    const hasPositionChange = changes.some((change) =>
+      change.type === 'position' && 'dragging' in change && change.dragging === false
     );
     if (hasPositionChange) {
       setHasChanges(true);
@@ -302,9 +329,9 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
 
         await loadGraph();
         setHasChanges(false);
-      } catch (err: any) {
-        setError(`Failed to create connection: ${err.message}`);
-        console.error('Error creating connection:', err);
+      } catch (err: unknown) {
+        setError(`Failed to create connection: ${getErrorMessage(err)}`);
+        logger.error('Failed to create connection', { error: getErrorMessage(err) });
       }
     },
     [graphData, loadGraph, flowNodes, category]
@@ -346,9 +373,9 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
         setHasUnsavedNodeChanges(false);
         setHasChanges(false);
       }
-    } catch (err: any) {
-      setError(`Failed to update node: ${err.message}`);
-      console.error('Error updating node:', err);
+    } catch (err: unknown) {
+      setError(`Failed to update node: ${getErrorMessage(err)}`);
+      logger.error('Failed to update node', { nodeId: selectedNodeId, error: getErrorMessage(err) });
     }
   };
 
@@ -375,26 +402,32 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
         setHasUnsavedNodeChanges(false);
         setHasChanges(false);
       }
-    } catch (err: any) {
-      setError(`Failed to update connection: ${err.message}`);
-      console.error('Error updating connection:', err);
+    } catch (err: unknown) {
+      setError(`Failed to update connection: ${getErrorMessage(err)}`);
+      logger.error('Failed to update connection', { connectionId: selectedConnectionId, error: getErrorMessage(err) });
     }
   };
 
   // Delete connection
   const handleDeleteConnection = async (connId: string) => {
-    if (!confirm('Delete this connection?')) return;
-
-    try {
-      await connectionsAPI.delete(connId);
-      await loadGraph();
-      setSelectedConnectionId(null);
-      setOpenPanel('none');
-      setHasChanges(false);
-    } catch (err: any) {
-      setError(`Failed to delete connection: ${err.message}`);
-      console.error('Error deleting connection:', err);
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Connection',
+      message: 'Are you sure you want to delete this connection?',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await connectionsAPI.delete(connId);
+          await loadGraph();
+          setSelectedConnectionId(null);
+          setOpenPanel('none');
+          setHasChanges(false);
+        } catch (err: unknown) {
+          setError(`Failed to delete connection: ${getErrorMessage(err)}`);
+          logger.error('Failed to delete connection', { connectionId: selectedConnectionId, error: getErrorMessage(err) });
+        }
+      },
+    });
   };
 
   // Delete node
@@ -402,20 +435,24 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
     const node = graphData?.nodes.find(n => n.id === nodeId);
     if (!node) return;
 
-    if (!confirm(`Delete node "${node.text}"? This will also delete all connections.`)) {
-      return;
-    }
-
-    try {
-      await nodesAPI.delete(nodeId);
-      await loadGraph();
-      setSelectedNodeId(null);
-      setOpenPanel('none');
-      setHasChanges(false);
-    } catch (err: any) {
-      setError(`Failed to delete node: ${err.message}`);
-      console.error('Error deleting node:', err);
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Node',
+      message: `Delete node "${node.text}"?\n\nThis will also delete all connections.`,
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await nodesAPI.delete(nodeId);
+          await loadGraph();
+          setSelectedNodeId(null);
+          setOpenPanel('none');
+          setHasChanges(false);
+        } catch (err: unknown) {
+          setError(`Failed to delete node: ${getErrorMessage(err)}`);
+          logger.error('Failed to delete node', { nodeId: selectedNodeId, error: getErrorMessage(err) });
+        }
+      },
+    });
   };
 
   // Create new node
@@ -472,17 +509,23 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
       });
       await loadGraph();
       setHasChanges(false); // Positions already saved
-    } catch (err: any) {
-      setError(`Failed to create node: ${err.message}`);
-      console.error('Error creating node:', err);
+    } catch (err: unknown) {
+      setError(`Failed to create node: ${getErrorMessage(err)}`);
+      logger.error('Failed to create node', { category, error: getErrorMessage(err) });
     }
   };
 
   const handleClose = () => {
     if (hasChanges) {
-      if (confirm('You have unsaved changes. Close editor? All changes will be lost.')) {
-        onClose();
-      }
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: 'You have unsaved changes. Close editor?\n\nAll changes will be lost.',
+        variant: 'danger',
+        onConfirm: () => {
+          onClose();
+        },
+      });
     } else {
       onClose();
     }
@@ -523,11 +566,16 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
       localStorage.setItem(layoutKey, JSON.stringify(nodePositions));
 
       setHasChanges(false);
-      alert('Graph saved successfully!');
+      setAlertDialog({
+        isOpen: true,
+        title: 'Success',
+        message: 'Graph saved successfully!',
+        type: 'success',
+      });
       // Don't call onSave() - keep the editor open for continued editing
-    } catch (err: any) {
-      setError(`Failed to save: ${err.message}`);
-      console.error('Error saving graph:', err);
+    } catch (err: unknown) {
+      setError(`Failed to save: ${getErrorMessage(err)}`);
+      logger.error('Failed to save graph layout', { category, error: getErrorMessage(err) });
     } finally {
       setLoading(false);
     }
@@ -546,78 +594,28 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex flex-col">
       {/* Header */}
-      <div className="bg-white p-4 shadow-lg">
-        <div className="flex justify-between items-start mb-3">
-          <div className="flex-1">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Edit Graph</h2>
-            <div className="flex gap-4 items-start">
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Issue Name</label>
-                <input
-                  type="text"
-                  value={editingIssueName}
-                  onChange={(e) => {
-                    setEditingIssueName(e.target.value);
-                    setHasUnsavedIssueChanges(true);
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                  placeholder="e.g., Brush Problems"
-                />
-              </div>
-              <div className="flex-1">
-                <CategoryCombobox
-                  value={editingDisplayCategory}
-                  onChange={(value) => {
-                    setEditingDisplayCategory(value);
-                    setHasUnsavedIssueChanges(true);
-                  }}
-                  placeholder="Type to search or create"
-                  className="text-sm"
-                />
-                <label className="block text-xs font-medium text-gray-600 mt-1">Display Category (optional)</label>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 mt-2">
-              Category ID: <span className="font-mono bg-gray-100 px-2 py-1 rounded">{category}</span> •{' '}
-              {graphData?.nodes.length || 0} nodes, {graphData?.connections.length || 0} connections
-            </p>
-          </div>
-          <div className="flex gap-3 ml-4">
-            {hasUnsavedIssueChanges && (
-              <button
-                onClick={handleSaveIssue}
-                disabled={loading}
-                className="px-4 py-2 rounded-md bg-gradient-to-r from-green-500 to-green-600 text-white font-medium hover:from-green-600 hover:to-green-700 shadow-md text-sm whitespace-nowrap"
-              >
-                💾 Save Metadata
-              </button>
-            )}
-            <button
-              onClick={handleCreateNode}
-              className="px-4 py-2 rounded-md bg-green-500 text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium text-sm"
-            >
-              ➕ New Node
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={loading}
-              className={`px-6 py-2 rounded-md text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium ${
-                hasChanges
-                  ? 'bg-gradient-to-br from-[#667eea] to-[#764ba2]'
-                  : 'bg-gray-400 cursor-not-allowed'
-              }`}
-            >
-              {loading ? '💾 Saving...' : hasChanges ? '💾 Save Layout *' : '💾 No Changes'}
-            </button>
-            <button
-              onClick={handleClose}
-              className="px-6 py-2 rounded-md bg-gray-200 text-gray-700 border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 font-medium"
-            >
-              ✕ Close
-            </button>
-          </div>
-        </div>
-      </div>
+      <IssueMetadataHeader
+        category={category}
+        editingIssueName={editingIssueName}
+        editingDisplayCategory={editingDisplayCategory}
+        hasUnsavedChanges={hasUnsavedIssueChanges}
+        nodesCount={graphData?.nodes.length || 0}
+        connectionsCount={graphData?.connections.length || 0}
+        loading={loading}
+        onIssueNameChange={(name) => {
+          setEditingIssueName(name);
+          setHasUnsavedIssueChanges(true);
+        }}
+        onDisplayCategoryChange={(cat) => {
+          setEditingDisplayCategory(cat);
+          setHasUnsavedIssueChanges(true);
+        }}
+        onSaveMetadata={handleSaveIssue}
+        onCreateNode={handleCreateNode}
+        onSaveLayout={handleSave}
+        onClose={handleClose}
+        hasLayoutChanges={hasChanges}
+      />
 
       {/* Error Display */}
       {error && (
@@ -629,213 +627,40 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
       {/* Main Content */}
       <div className="flex-1 flex relative">
         {/* Node Edit Panel (Left Slide-out) */}
-        <div
-          className={`absolute left-0 top-0 bottom-0 w-[350px] bg-white border-r border-gray-200 shadow-xl overflow-y-auto z-10 transition-transform duration-300 ease-in-out ${
-            openPanel === 'node' ? 'translate-x-0' : '-translate-x-full'
-          }`}
-        >
-          <div className="p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Edit Node</h3>
-
-            {selectedNode ? (
-              <div>
-                {/* Node Type Selector */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Node Type
-                  </label>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={async () => {
-                        if (selectedNode.node_type === 'Question') return;
-                        try {
-                          await nodesAPI.update(selectedNode.id, { node_type: 'Question' });
-                          await loadGraph();
-                        } catch (err: any) {
-                          setError(`Failed to change node type: ${err.message}`);
-                        }
-                      }}
-                      className={`flex-1 px-4 py-2 rounded-md border-2 font-medium transition-all ${
-                        selectedNode.node_type === 'Question'
-                          ? 'border-blue-500 bg-blue-100 text-blue-800'
-                          : 'border-gray-300 bg-white text-gray-600 hover:border-blue-300'
-                      }`}
-                    >
-                      ❓ Question
-                    </button>
-                    <button
-                      onClick={async () => {
-                        if (selectedNode.node_type === 'Conclusion') return;
-                        try {
-                          await nodesAPI.update(selectedNode.id, { node_type: 'Conclusion' });
-                          await loadGraph();
-                        } catch (err: any) {
-                          setError(`Failed to change node type: ${err.message}`);
-                        }
-                      }}
-                      className={`flex-1 px-4 py-2 rounded-md border-2 font-medium transition-all ${
-                        selectedNode.node_type === 'Conclusion'
-                          ? 'border-green-500 bg-green-100 text-green-800'
-                          : 'border-gray-300 bg-white text-gray-600 hover:border-green-300'
-                      }`}
-                    >
-                      🎯 Conclusion
-                    </button>
-                  </div>
-                </div>
-
-                {/* Node Text */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {selectedNode.node_type === 'Conclusion' ? 'Conclusion Text' : 'Question Text'}
-                  </label>
-                  <textarea
-                    value={editingText}
-                    onChange={(e) => {
-                      setEditingText(e.target.value);
-                      setHasUnsavedNodeChanges(true);
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md resize-none h-24"
-                    placeholder={selectedNode.node_type === 'Conclusion'
-                      ? "Enter what to do next..."
-                      : "Enter the question..."
-                    }
-                  />
-                </div>
-
-                {/* Save Node Button */}
-                {hasUnsavedNodeChanges && (
-                  <div className="mb-4">
-                    <button
-                      onClick={handleSaveNode}
-                      className="w-full px-4 py-2 rounded-md bg-gradient-to-r from-green-500 to-green-600 text-white font-medium hover:from-green-600 hover:to-green-700 shadow-md"
-                    >
-                      Save Node Changes
-                    </button>
-                  </div>
-                )}
-
-                {/* Delete Node Button */}
-                <button
-                  onClick={() => handleDeleteNode(selectedNode.id)}
-                  className="w-full px-3 py-2 rounded-md bg-red-500 text-white font-medium hover:bg-red-600"
-                >
-                  Delete Node
-                </button>
-              </div>
-            ) : (
-              <div className="text-center py-12 text-gray-500">
-                <p className="text-sm">No node selected</p>
-              </div>
-            )}
-          </div>
-        </div>
+        <NodeDetailsPanel
+          isOpen={openPanel === 'node'}
+          selectedNode={selectedNode}
+          editingText={editingText}
+          hasUnsavedChanges={hasUnsavedNodeChanges}
+          onEditingTextChange={(text) => {
+            setEditingText(text);
+            setHasUnsavedNodeChanges(true);
+          }}
+          onSave={handleSaveNode}
+          onDelete={handleDeleteNode}
+          onClose={() => setOpenPanel('none')}
+          onNodeTypeChange={loadGraph}
+          setError={setError}
+        />
 
         {/* Connection Edit Panel (Right Slide-out) */}
-        <div
-          className={`absolute right-0 top-0 bottom-0 w-[350px] bg-white border-l border-gray-200 shadow-xl overflow-y-auto z-10 transition-transform duration-300 ease-in-out ${
-            openPanel === 'connection' ? 'translate-x-0' : 'translate-x-full'
-          }`}
-        >
-          <div className="p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Edit Question</h3>
-
-            {selectedConnection ? (
-              <div>
-                {/* Connection Info */}
-                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                  <p className="text-xs text-blue-600 font-medium mb-1">From:</p>
-                  <p className="text-sm text-gray-800 mb-2">
-                    {graphData?.nodes.find(n => n.id === selectedConnection.from_node_id)?.text.substring(0, 50)}
-                  </p>
-                  <p className="text-xs text-blue-600 font-medium mb-1">To:</p>
-                  <p className="text-sm text-gray-800">
-                    {graphData?.nodes.find(n => n.id === selectedConnection.to_node_id)?.text.substring(0, 50)}
-                  </p>
-                </div>
-
-                {/* Connection Label */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Question
-                  </label>
-                  <input
-                    type="text"
-                    value={editingConnections[selectedConnection.id]?.label ?? selectedConnection.label}
-                    onChange={(e) => {
-                      setEditingConnections(prev => ({
-                        ...prev,
-                        [selectedConnection.id]: {
-                          ...prev[selectedConnection.id],
-                          label: e.target.value,
-                          to_node_id: prev[selectedConnection.id]?.to_node_id ?? selectedConnection.to_node_id,
-                        },
-                      }));
-                      setHasUnsavedNodeChanges(true);
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    placeholder="e.g., Yes, No, Worn..."
-                  />
-                </div>
-
-                {/* Target Node Selector */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Goes to
-                  </label>
-                  <select
-                    value={editingConnections[selectedConnection.id]?.to_node_id ?? selectedConnection.to_node_id}
-                    onChange={(e) => {
-                      setEditingConnections(prev => ({
-                        ...prev,
-                        [selectedConnection.id]: {
-                          label: prev[selectedConnection.id]?.label ?? selectedConnection.label,
-                          to_node_id: e.target.value,
-                        },
-                      }));
-                      setHasUnsavedNodeChanges(true);
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  >
-                    {graphData?.nodes
-                      .filter(n => n.id !== selectedConnection.from_node_id)
-                      .map(n => (
-                        <option key={n.id} value={n.id}>
-                          {n.node_type === 'Conclusion' ? '🎯 ' : '❓ '}
-                          {n.text.substring(0, 50)}{n.text.length > 50 ? '...' : ''}
-                        </option>
-                      ))
-                    }
-                  </select>
-                </div>
-
-                {/* Save Connection Button */}
-                {hasUnsavedNodeChanges && (
-                  <div className="mb-4">
-                    <button
-                      onClick={handleSaveConnection}
-                      className="w-full px-4 py-2 rounded-md bg-gradient-to-r from-green-500 to-green-600 text-white font-medium hover:from-green-600 hover:to-green-700 shadow-md"
-                    >
-                      Save Connection Changes
-                    </button>
-                  </div>
-                )}
-
-                {/* Delete Connection Button */}
-                <button
-                  onClick={() => handleDeleteConnection(selectedConnection.id)}
-                  className="w-full px-3 py-2 rounded-md bg-red-500 text-white font-medium hover:bg-red-600"
-                >
-                  Delete Connection
-                </button>
-              </div>
-            ) : (
-              <div className="text-center py-12 text-gray-500">
-                <p className="text-sm">No connection selected</p>
-              </div>
-            )}
-          </div>
-        </div>
+        <ConnectionDetailsPanel
+          isOpen={openPanel === 'connection'}
+          selectedConnection={selectedConnection}
+          graphData={graphData}
+          editingConnections={editingConnections}
+          hasUnsavedChanges={hasUnsavedNodeChanges}
+          onConnectionChange={(connId, label, toNodeId) => {
+            setEditingConnections(prev => ({
+              ...prev,
+              [connId]: { label, to_node_id: toNodeId },
+            }));
+            setHasUnsavedNodeChanges(true);
+          }}
+          onSave={handleSaveConnection}
+          onDelete={handleDeleteConnection}
+          onClose={() => setOpenPanel('none')}
+        />
 
         {/* Graph Visualization (Full Width) */}
         <div className="flex-1 bg-gray-50">
@@ -857,6 +682,24 @@ export default function TreeEditorModal({ category, issueName, onClose }: TreeEd
           </ReactFlow>
         </div>
       </div>
+
+      {/* Accessible dialogs (replaces alert/confirm) */}
+      <AccessibleAlert
+        isOpen={alertDialog.isOpen}
+        onClose={() => setAlertDialog({ ...alertDialog, isOpen: false })}
+        title={alertDialog.title}
+        message={alertDialog.message}
+        type={alertDialog.type}
+      />
+
+      <AccessibleConfirm
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        variant={confirmDialog.variant}
+      />
     </div>
   );
 }

@@ -29,92 +29,7 @@ pub struct User {
 }
 
 // ============================================
-// QUESTION MODELS
-// ============================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, FromRow)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct Question {
-    pub id: Uuid,
-    pub semantic_id: String,
-    pub text: String,
-    pub category: Option<String>,
-    pub is_active: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct CreateQuestion {
-    pub semantic_id: String,
-    pub text: String,
-    pub category: Option<String>,
-}
-
-#[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct UpdateQuestion {
-    pub text: Option<String>,
-    pub category: Option<String>,
-    pub is_active: Option<bool>,
-}
-
-// ============================================
-// ANSWER MODELS
-// ============================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, FromRow)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct Answer {
-    pub id: Uuid,
-    pub question_id: Uuid,
-    pub label: String,
-    pub next_question_id: Option<Uuid>,
-    pub conclusion_text: Option<String>,
-    pub order_index: i32,
-    pub is_active: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct CreateAnswer {
-    pub question_id: Uuid,
-    pub label: String,
-    pub next_question_id: Option<Uuid>,
-    pub conclusion_text: Option<String>,
-    pub order_index: i32,
-}
-
-#[derive(Debug, Deserialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct UpdateAnswer {
-    pub label: Option<String>,
-    pub next_question_id: Option<Uuid>,
-    pub conclusion_text: Option<String>,
-    pub order_index: Option<i32>,
-    pub is_active: Option<bool>,
-}
-
-// ============================================
-// QUERY RESPONSE MODELS
-// ============================================
-
-/// Response for question with its answers
-#[derive(Debug, Serialize, TS)]
-#[ts(export, export_to = "../../web/src/types/")]
-pub struct QuestionWithAnswers {
-    pub id: Uuid,
-    pub semantic_id: String,
-    pub text: String,
-    pub category: Option<String>,
-    pub answers: Vec<Answer>,
-}
-
-// ============================================
-// NODE-GRAPH MODELS (New Architecture)
+// NODE-GRAPH MODELS
 // ============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, sqlx::Type)]
@@ -194,7 +109,7 @@ pub struct CreateConnection {
     pub order_index: i32,
 }
 
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../web/src/types/")]
 pub struct UpdateConnection {
     #[ts(optional)]

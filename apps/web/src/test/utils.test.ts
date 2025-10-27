@@ -154,14 +154,22 @@ describe('Number Utilities', () => {
 
 describe('Boolean Logic', () => {
   it('should handle AND logic', () => {
+    // Testing boolean logic with constants is intentional
+    // eslint-disable-next-line no-constant-binary-expression
     expect(true && true).toBe(true);
+    // eslint-disable-next-line no-constant-binary-expression
     expect(true && false).toBe(false);
+    // eslint-disable-next-line no-constant-binary-expression
     expect(false && false).toBe(false);
   });
 
   it('should handle OR logic', () => {
+    // Testing boolean logic with constants is intentional
+    // eslint-disable-next-line no-constant-binary-expression
     expect(true || false).toBe(true);
+    // eslint-disable-next-line no-constant-binary-expression
     expect(false || true).toBe(true);
+    // eslint-disable-next-line no-constant-binary-expression
     expect(false || false).toBe(false);
   });
 

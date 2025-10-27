@@ -16,5 +16,18 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Vendor chunks for better caching
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'react-flow': ['reactflow'],
+          // Utility chunks
+          'axios': ['axios'],
+        },
+      },
+    },
+    // Increase chunk size warning limit for production bundles
+    chunkSizeWarningLimit: 1000,
   },
 })

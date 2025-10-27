@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { adminAPI } from '../lib/api';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 interface CategoryComboboxProps {
   value: string;
@@ -34,7 +36,7 @@ export default function CategoryCombobox({
       const data = await adminAPI.getCategories();
       setCategories(data.categories);
     } catch (err) {
-      console.error('Failed to load categories:', err);
+      logger.error('Failed to load categories for combobox', { error: getErrorMessage(err) });
       setCategories([]);
     } finally {
       setLoading(false);

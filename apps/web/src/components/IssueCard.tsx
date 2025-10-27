@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import type { Issue } from '../types/issues';
 import DeleteIssueModal from './DeleteIssueModal';
 
@@ -11,7 +11,7 @@ interface IssueCardProps {
   onExport: (category: string) => Promise<void>;
 }
 
-export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete, onExport }: IssueCardProps) {
+const IssueCard = memo(function IssueCard({ issue, onToggle, onTest, onEdit, onDelete, onExport }: IssueCardProps) {
   const [toggling, setToggling] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
@@ -62,6 +62,7 @@ export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete, o
             className={`w-12 h-6 rounded-full transition-colors duration-200 ${
               issue.is_active ? 'bg-green-500' : 'bg-gray-300'
             } ${toggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} relative`}
+            aria-label={`Turn ${issue.name} issue ${issue.is_active ? 'off' : 'on'}`}
             title={`Turn issue ${issue.is_active ? 'off' : 'on'}`}
           >
             <div
@@ -77,24 +78,28 @@ export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete, o
         <button
           onClick={() => onEdit(issue.category)}
           className="px-3 py-[6px] text-[0.9em] rounded-md bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5"
+          aria-label={`Edit decision tree for ${issue.name}`}
         >
           ✏️ Edit Tree
         </button>
         <button
           onClick={() => onTest(issue.category)}
           className="px-3 py-[6px] text-[0.9em] rounded-md bg-[#4CAF50] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5"
+          aria-label={`Test troubleshooting flow for ${issue.name}`}
         >
           🧪 Test
         </button>
         <button
           onClick={() => onExport(issue.category)}
           className="px-3 py-[6px] text-[0.9em] rounded-md bg-[#3b82f6] text-white border-none cursor-pointer transition-transform duration-200 hover:-translate-y-0.5"
+          aria-label={`Export ${issue.name} issue data`}
         >
           📤 Export
         </button>
         <button
           onClick={handleDeleteClick}
           className="px-3 py-[6px] text-[0.9em] rounded-md bg-[#f44336] text-white border-none transition-transform duration-200 hover:-translate-y-0.5 cursor-pointer"
+          aria-label={`Delete ${issue.name} issue`}
         >
           🗑️ Delete
         </button>
@@ -109,4 +114,6 @@ export default function IssueCard({ issue, onToggle, onTest, onEdit, onDelete, o
       />
     </div>
   );
-}
+});
+
+export default IssueCard;

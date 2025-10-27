@@ -1,6 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, memo } from 'react';
 import { issuesAPI } from '../lib/api';
 import type { IssueExportData, ImportResult } from '../types/issues';
+import { getErrorMessage } from '../lib/errorUtils';
+import { logger } from '../lib/logger';
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -8,7 +10,7 @@ interface ImportModalProps {
   onSuccess: () => void;
 }
 
-export default function ImportModal({ isOpen, onClose, onSuccess }: ImportModalProps) {
+const ImportModal = memo(function ImportModal({ isOpen, onClose, onSuccess }: ImportModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -58,16 +60,13 @@ export default function ImportModal({ isOpen, onClose, onSuccess }: ImportModalP
           onSuccess();
         }, 2000);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof SyntaxError) {
         setError('Invalid JSON file format');
       } else {
-        const errorMessage = err.response?.data?.error?.data?.message ||
-                            err.message ||
-                            'Failed to import issues. Please try again.';
-        setError(errorMessage);
+        setError(getErrorMessage(err) || 'Failed to import issues. Please try again.');
       }
-      console.error('Error importing issues:', err);
+      logger.error('Failed to import issues from file', { fileName: file?.name, error: getErrorMessage(err) });
     } finally {
       setImporting(false);
     }
@@ -87,13 +86,19 @@ export default function ImportModal({ isOpen, onClose, onSuccess }: ImportModalP
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-5">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-modal-title"
+      >
         <div className="p-8">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">📥 Import Issues</h2>
+            <h2 id="import-modal-title" className="text-2xl font-bold text-gray-800"><span aria-hidden="true">📥</span> Import Issues</h2>
             <button
               onClick={handleClose}
               className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+              aria-label="Close import dialog"
             >
               ×
             </button>
@@ -193,4 +198,6 @@ export default function ImportModal({ isOpen, onClose, onSuccess }: ImportModalP
       </div>
     </div>
   );
-}
+});
+
+export default ImportModal;
